@@ -1,7 +1,7 @@
 # Setup
 
 > Last updated: 2026-10-14
-> Describes commit: (first commit — hash in `docs/progress.md`)
+> Describes commit: 8d96914ded9e91bb1c5da09438a2fb7ff50fb260 (Milestone 1 Skeleton, first commit)
 
 Everything needed to run and test Forgeline on a new machine.
 

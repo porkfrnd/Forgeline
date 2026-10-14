@@ -1,7 +1,7 @@
 # Status
 
 > Last updated: 2026-10-14
-> Describes commit: (none yet — this file is created before the first commit; after committing, the hash will be recorded in `docs/progress.md`)
+> Describes commit: 8d96914ded9e91bb1c5da09438a2fb7ff50fb260 (Milestone 1 Skeleton, first commit)
 
 ## What Forgeline is
 

@@ -1,7 +1,7 @@
 # Forgeline — Full Build Prompt
 
 > Last updated: 2026-10-14
-> Commit: (none yet — first commit)
+> Commit: 8d96914ded9e91bb1c5da09438a2fb7ff50fb260 (Milestone 1 Skeleton, first commit)
 >
 > This file is a verbatim copy of the original build prompt. It is the source of truth for what to build, except where `docs/decisions.md` records a change. Never edit this file; record any change in `docs/decisions.md` with the reason.
 

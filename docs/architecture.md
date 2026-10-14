@@ -1,7 +1,7 @@
 # Architecture
 
 > Last updated: 2026-10-14
-> Describes commit: (first commit — hash in `docs/progress.md`)
+> Describes commit: 8d96914ded9e91bb1c5da09438a2fb7ff50fb260 (Milestone 1 Skeleton, first commit)
 
 How the code fits together today, and where things will live as milestones land. Sections that describe not-yet-built modules say so explicitly.
 

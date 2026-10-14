@@ -1,7 +1,7 @@
 # Decisions
 
 > Last updated: 2026-10-14
-> Describes commit: (first commit — hash recorded in `docs/progress.md` after committing)
+> Describes commit: 8d96914ded9e91bb1c5da09438a2fb7ff50fb260 (Milestone 1 Skeleton, first commit)
 
 Each decision lists its date, the choice, the alternatives rejected, and the reason. Changes to the spec are recorded here, never by editing `docs/spec.md`.
 
