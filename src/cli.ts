@@ -48,7 +48,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       }
       const wantPort = parsed.port;
       try {
-        const { server, actualPort, token, refreshUrl } = await startServer({
+        const { actualPort, token, refreshUrl, close } = await startServer({
           port: wantPort,
           hostname: "127.0.0.1",
         });
@@ -71,13 +71,12 @@ export async function main(argv: string[] = process.argv): Promise<void> {
             }
           });
         }
+        let stopping = false;
         const shutdown = () => {
-          const srv = server as unknown as {
-            closeAllConnections?: () => void;
-            close: (cb: () => void) => void;
-          };
-          srv.closeAllConnections?.();
-          srv.close(() => {
+          // Second Ctrl+C must not stack another teardown on a closing server.
+          if (stopping) return;
+          stopping = true;
+          void close().then(() => {
             console.log("Forgeline stopped. Goodbye.");
             process.exit(0);
           });

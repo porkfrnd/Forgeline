@@ -1,8 +1,10 @@
 import type { RepoSummary } from "../../../shared/types.js";
+import type { LiveMode } from "../app/useRepos";
 
 interface SidebarProps {
   repos: RepoSummary[];
   loadError: string | null;
+  liveMode: LiveMode;
 }
 
 function statusLine(repo: RepoSummary): string {
@@ -16,12 +18,16 @@ function statusLine(repo: RepoSummary): string {
   return bits.join(" · ");
 }
 
-export function Sidebar({ repos, loadError }: SidebarProps) {
+export function Sidebar({ repos, loadError, liveMode }: SidebarProps) {
+  // Said plainly rather than hidden: on a network drive native watching
+  // fails and the server falls back to polling, so updates lag a few seconds.
+  const note = liveMode === "polling" ? "Live updates are polling." : null;
   if (repos.length === 0) {
     return (
       <aside className="sidebar" aria-label="Repositories">
         <p className="empty-title">Repositories</p>
         <p className="empty-text">{loadError ?? "No folders scanned yet."}</p>
+        {note ? <p className="live-note">{note}</p> : null}
         <button className="button">Choose folders</button>
       </aside>
     );
@@ -37,6 +43,7 @@ export function Sidebar({ repos, loadError }: SidebarProps) {
           </li>
         ))}
       </ul>
+      {note ? <p className="live-note">{note}</p> : null}
     </aside>
   );
 }

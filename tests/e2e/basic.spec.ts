@@ -286,6 +286,59 @@ test.describe("Forgeline skeleton", () => {
     await res.text();
   });
 
+  test("a change in a watched repo reaches the dashboard over SSE", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const root = mkdtempSync(join(tmpdir(), "fl-e2e-live-"));
+    try {
+      const repo = join(root, "demo");
+      mkdirSync(repo, { recursive: true });
+      spawnSync("git", ["init", "-b", "main"], { cwd: repo });
+      spawnSync("git", ["config", "user.email", "t@example.com"], { cwd: repo });
+      spawnSync("git", ["config", "user.name", "T"], { cwd: repo });
+      writeFileSync(join(repo, "a.txt"), "one\n");
+      spawnSync("git", ["add", "a.txt"], { cwd: repo });
+      spawnSync("git", ["commit", "-m", "init"], { cwd: repo });
+
+      const cookie = await sessionCookie(baseUrl);
+      await setRootsForTest(baseUrl, [root]);
+      await registerRepoForTest(baseUrl, cookie, repo);
+
+      const token = await mintToken(baseUrl);
+      await page.goto(`${baseUrl}/?t=${token}`);
+
+      const row = page.locator(".repo-item", { hasText: "demo" });
+      await expect(row).toBeVisible();
+      await expect(row.locator(".repo-status")).toContainText("main");
+
+      // Watch the stream from inside the page so we assert the push itself,
+      // not just the eventual DOM. Passed as a string because this file is
+      // typechecked with the Node lib only — the browser side has no DOM
+      // types here, and none should be faked into a server-side config.
+      await page.evaluate(`(() => {
+        window.__reposFrames = [];
+        const source = new EventSource("/api/events");
+        source.addEventListener("repos", (event) => {
+          window.__reposFrames.push(event.data);
+        });
+      })()`);
+
+      // Stage a file: .git/index changes, which the server must notice.
+      writeFileSync(join(repo, "new.txt"), "staged\n");
+      const add = spawnSync("git", ["add", "new.txt"], { cwd: repo });
+      expect(add.status).toBe(0);
+
+      // Well inside the client's 15s fallback poll, so this can only have
+      // arrived as an SSE push.
+      await expect(row.locator(".repo-status")).toContainText("1 changed", { timeout: 10000 });
+      const frames = (await page.evaluate("window.__reposFrames")) as unknown;
+      expect(Array.isArray(frames)).toBe(true);
+      expect((frames as string[]).length).toBeGreaterThan(0);
+      expect((frames as string[]).join(" ")).toContain("changedFiles");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // Directory symlinks need elevated rights on Windows CI runners.
   test("repo file route rejects a symlink swapped in after registration", async ({ request }) => {
     test.skip(process.platform === "win32", "symlinks need elevated rights on Windows");

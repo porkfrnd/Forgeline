@@ -12,7 +12,7 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 | # | Milestone | State |
 | --- | --- | --- |
 | 1 | Skeleton: CLI + port logic, server serves the React app, theme tokens, layout shell (Paper + Midnight) | done (this session) |
-| 2 | Git core: `git.ts` wrapper, parsers, repo scanning, dashboard with live status | in progress (slice 1 done) |
+| 2 | Git core: `git.ts` wrapper, parsers, repo scanning, dashboard with live status | done (this session) |
 | 3 | Commit flow: file list, hunk staging, diff viewer, commit, sanity check card | not started |
 | 4 | Safety: action journal, snapshots, undo timeline, rescue mode, confirmation previews | not started |
 | 5 | Error translator with the full starter catalogue | not started |
@@ -24,8 +24,9 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 ## Current milestone and slice
 
 - Milestone 1 (Skeleton) is complete and verified.
-- Milestone 2 slice 1 is **done and verified**: repo discovery (`scanRepos`), the `git.ts` read helpers (`currentBranch`, `aheadBehind`, `parseStatusChangedFiles`, `parseRevListCount`, `repoStatusFields`), `GET /api/repos` returning live status with pruning of vanished paths, `POST /api/repos/scan` registering what a picked root contains, and the dashboard Sidebar/Header driven by that data through `useRepos`.
-- Next slice is Milestone 2, second slice: **live updates** — `chokidar` watching of `.git/HEAD`, `.git/index`, and `.git/refs` per repo with a 3s polling fallback, a per-repo single-writer queue, and pushing real changes over the existing authenticated `/api/events` SSE endpoint (today it only sends the initial comment and `retry`).
+- Milestone 2 slice 1 is **done and verified**: repo discovery (`scanRepos`), the `git.ts` read helpers (`currentBranch`, `aheadBehind`, `parseStatusChangedFiles`, `parseStatusBranch`, `parseRevListCount`, `repoStatusFields`), `GET /api/repos` returning live status with pruning of vanished paths, `POST /api/repos/scan` registering what a picked root contains, and the dashboard Sidebar/Header driven by that data through `useRepos`.
+- Milestone 2 slice 2 is **done and verified**: live updates. `chokidar` watches `.git/HEAD`, `.git/index`, `.git/refs` (plus `packed-refs`) per registered repo with a 3-second polling fallback, events are debounced, and real rows are pushed over the authenticated `/api/events` SSE endpoint. A per-repository single-writer queue serializes git calls in the same repo. The dashboard now consumes the stream instead of polling, and says so in the sidebar when the server is polling.
+- Next slice is Milestone 3: **the commit flow** — file list, hunk staging, diff viewer, commit, and the sanity-check card. `runGit` still needs a timeout and `--` before paths before that work lands (gap 6 below).
 
 ## Latest `verify` result
 
@@ -34,10 +35,10 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 - typecheck: pass (`tsc -p tsconfig.json && tsc -p tsconfig.web.json`)
 - lint: pass (`eslint .`)
 - lint:copy: pass (`node scripts/lint-copy.js`)
-- test: 43 passed (`vitest run`, 7 files: session, registry, paths, basic, git, scan, repo-summary)
-- test:e2e: 36 passed (`playwright test`, desktop 1440px + narrow 800px; 18 tests x 2 widths)
+- test: 58 passed (`vitest run`, 9 files: session, registry, paths, basic, git, scan, repo-summary, queue, live/watcher)
+- test:e2e: 38 passed (`playwright test`, desktop 1440px + narrow 800px; 19 tests x 2 widths)
 
-Evidence: this session's `npm run verify` tail shows the 36 e2e checks passing (`36 passed (6.7s)`) and `npm test` shows `Tests 43 passed (43)`.
+Evidence: this session's `npm run verify` tail shows the 38 e2e checks passing (`38 passed (7.6s)`) and `npm test` shows `Tests 58 passed (58)`.
 
 ## Verified flows (Milestone 1)
 
@@ -61,7 +62,17 @@ Each item below was run, not assumed:
 - The npm package name `forgeline` has not been checked for availability on the npm registry, and nothing has been published. Do not claim it is published.
 - Sign-in (`@napi-rs/keyring`, GitHub device flow) is not implemented. It is Milestone 6.
 - Only Linux has been run. macOS and Windows are untested.
-- The SSE endpoint `/api/events` exists and is authenticated, but it only sends an initial comment and `retry`; it does not yet push real repo-status changes. That arrives with live updates in the next Milestone 2 slice.
+- The SSE endpoint `/api/events` now pushes real changes: it sends the live mode and a full snapshot on connect, then only the repos whose `.git` bookkeeping files changed. The dashboard consumes it through `EventSource` and falls back to a 15s poll if the stream cannot be established.
+
+## Verified flows (Milestone 2, slice 2)
+
+Each item below was run, not assumed:
+
+- `RepoQueue` runs tasks for the same repo strictly one at a time in order, lets different repos run concurrently, keeps the chain alive after a task rejects, and hands each caller its own value and error rather than its predecessor's (unit tests, `src/server/queue.test.ts`).
+- `LiveWatcher` reports a repo when `.git/HEAD`, `.git/index`, or a file under `.git/refs` changes; coalesces a six-write checkout-shaped burst into exactly one callback; ignores writes to `.git/config`, `.git/objects`, and the working tree; stops watching a repo dropped from the set; and reports mode `watching` natively (unit tests, `src/server/live/watcher.test.ts`).
+- A real change reaches the open dashboard through SSE: the e2e test registers a real git repo, opens the page, installs an `EventSource` listener in the page, runs `git add` outside the browser, and asserts the sidebar shows `1 changed` plus a non-empty `repos` frame — in about 1 second, well inside the client's 15-second fallback poll, so it can only have arrived as a push.
+- `repoStatusFields` now reads the branch from the `status --porcelain=v2 --branch` header instead of a second `rev-parse`, so a normal refresh spawns one git process for status plus one for ahead/behind rather than three. Only a detached HEAD still makes the extra call, to name the commit.
+- Ctrl+C stops the server and releases every file watcher; a second Ctrl+C does not stack another teardown.
 
 ## Verified flows (Milestone 2, slice 1)
 
@@ -91,11 +102,13 @@ Each gap: what is missing, the file, the planned fix, the test that will prove i
 ### Git contracts (Milestone 2/3, recorded now)
 
 6. **`runGit` has no timeout or cancel; `--` before paths is not yet enforced at call sites.** File: `src/server/git/git.ts`, call sites in later milestones. Fix: add timeout (longer for network) + abort, and always pass `--` before paths from `registry.child` results. Prove: unit tests with a slow fake + hunk-fixture suite (CRLF, no-trailing-newline, rename, binary, mode, symlink, spaces/non-Latin names).
-7. **Single-writer queue per repo not built.** File: new in Milestone 2/4. Prove: concurrency unit test.
+7. **Single-writer queue per repo — done this slice.** `src/server/queue.ts`; every status read goes through it via `summarizeRepo`. Prove: concurrency unit tests in `src/server/queue.test.ts` (same-repo serialization, cross-repo concurrency, rejection does not poison the chain, per-caller results).
 8. **Commit messages must go via `git commit -F -` on stdin.** Fix: apply when the commit flow lands (Milestone 3). Prove: commit e2e.
-9. **Scan results are not cached to app-data yet.** `scanRepos` runs on demand per `POST /api/repos/scan`; the spec's cache of scan results in the OS app-data folder is not written. Fix: next slice, alongside live updates. Prove: unit test that a cached scan skips a second disk walk.
-10. **The dashboard has no "Choose folders" flow.** The Sidebar still renders a static "Choose folders" button that calls nothing; roots reach the server only through `POST /api/repos/scan` (currently exercised by the test helper). Fix: a real folder-picker surface that posts the picked roots. Prove: e2e that picking a root lists its repos.
-11. **`repoStatusFields` runs git three times per repo per refresh** (`status`, `rev-parse --abbrev-ref`, `rev-list`). Fine for a handful of repos; the branch already arrives in the `status --porcelain=v2 --branch` header. Fix: parse the branch header and drop the extra `rev-parse`. Prove: `repoStatusFields` unit test unchanged, plus a spy test that only one git process spawns per repo.
+9. **Scan results are not cached to app-data yet.** `scanRepos` runs on demand per `POST /api/repos/scan`; the spec's cache of scan results in the OS app-data folder is not written. Fix: Milestone 3 or 4. Prove: unit test that a cached scan skips a second disk walk.
+10. **The dashboard has no "Choose folders" flow.** The Sidebar still renders a static "Choose folders" button that calls nothing; roots reach the server only through `POST /api/repos/scan` (currently exercised by the test helper and the screenshot script). Fix: a real folder-picker surface that posts the picked roots. Prove: e2e that picking a root lists its repos.
+11. **`repoStatusFields` spawning three git processes per repo — done this slice.** The branch now comes from `parseStatusBranch` on the `status --porcelain=v2 --branch` header, so a normal refresh is two processes (`status` + `rev-list`) instead of three; only a detached HEAD still pays for `rev-parse --short` to name the commit. Prove: `parseStatusBranch` unit tests plus the unchanged fixture tests.
+12. **The polling fallback is implemented but never exercised.** `LiveWatcher.engageFallback` rebuilds every watcher with `usePolling: true` on a chokidar error, and the sidebar shows "Live updates are polling." — but no test forces a chokidar error, so that path is unproven. Fix: a unit test that injects an error into one watcher and asserts mode becomes `polling` and changes are still reported. Prove: that test.
+13. **Settings are not persisted anywhere.** Roots, notes, and the scan cache all live in memory for the life of the process, so a restart forgets them. The spec wants them in the OS app-data folder. Fix: Milestone 3 or 4. Prove: restart-persistence unit test.
 
 ### Everything else (Update 1 §§7-9, deferred to their milestones)
 
@@ -111,6 +124,16 @@ None. Nothing has shipped in a shallow form.
 
 ## Exact next step
 
-Milestone 2, slice 2: **live updates and the per-repo queue.** Add `chokidar` watching of `.git/HEAD`, `.git/index`, and `.git/refs` for each registered repo with a 3-second polling fallback (and a small note when polling is in effect), debounce the events, and push real repo-status changes over the existing authenticated `/api/events` SSE endpoint so the Sidebar refreshes without its own timer. Add a single-writer queue per repo so concurrent git calls in the same repo serialize. Prove: a unit test that two overlapping git calls in one repo never interleave, and an e2e test that a change to a repo's working tree reaches the dashboard through `/api/events` within the debounce window.
+Milestone 3, slice 1: **the commit flow's foundation** — the per-repo diff read
+(`git diff` with `--` before paths from `registry.child`), the changed-file
+list with staged/unstaged state, and hunk parsing against the fixture
+hunk-suite (CRLF, no-trailing-newline, rename, binary, mode change, symlink,
+spaces and non-Latin names). Gap 6 must land with it: `runGit` needs a timeout
+and abort, and every path argument needs `--` in front of it.
 
-Slice 1 left over from the plan: the "Choose folders" surface in `src/web/src/components/Sidebar.tsx` still renders a static button (recorded as gap 10 above) — wire it to `POST /api/repos/scan` in the same slice.
+Also still open from Milestone 2, and small: the polling fallback has no test
+(gap 12) — inject a chokidar error into one watcher and assert the mode flips
+to `polling` while changes are still reported.
+
+Gaps 9 and 13 (app-data cache and persisted settings) both want the same
+storage module; they should land together rather than twice.

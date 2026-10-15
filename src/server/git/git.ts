@@ -110,6 +110,22 @@ export function parseStatusChangedFiles(porcelainV2Z: string): number {
   return changed;
 }
 
+/** Parse the branch name out of a `status --porcelain=v2 --branch` header
+ *  (`# branch.head <name>`). Returns `null` when the header is absent, and
+ *  the literal `"HEAD"` for a detached HEAD. The dashboard shows the short
+ *  sha alongside that, which is the only case still needing a second git
+ *  call — the normal case costs one process per refresh, not two. */
+export function parseStatusBranch(porcelainV2Z: string): string | null {
+  const prefix = "# branch.head ";
+  for (const record of porcelainV2Z.split("\0")) {
+    if (!record.startsWith(prefix)) continue;
+    const head = record.slice(prefix.length).trim();
+    if (head.length === 0) return null;
+    return head === "(detached)" ? "HEAD" : head;
+  }
+  return null;
+}
+
 /** Parse `rev-list --left-right --count A...B` output (`"<ahead>\t<behind>"`). */
 export function parseRevListCount(output: string): AheadBehind {
   const parts = output.trim().split(/\s+/);
@@ -149,10 +165,19 @@ export async function repoStatusFields(repoPath: string): Promise<RepoStatusFiel
   if (status.exitCode !== 0) {
     return { branch: "unknown", changedFiles: 0, ahead: 0, behind: 0 };
   }
-  const [branch, counts] = await Promise.all([
-    currentBranch(repoPath),
-    aheadBehind(repoPath),
-  ]);
+  // The branch name is already in the status header, so the normal case is
+  // one git process for the branch plus one for ahead/behind. Only a
+  // detached HEAD needs the extra `rev-parse --short` to name the commit.
+  let branch = parseStatusBranch(status.stdout) ?? "unknown";
+  if (branch === "HEAD") {
+    const sha = await runGit([...gitInDirArgs(repoPath), "rev-parse", "--short", "HEAD"], {
+      cwd: repoPath,
+      env: OPTIONAL_LOCKS_ENV,
+    });
+    const short = sha.stdout.trim();
+    if (sha.exitCode === 0 && short.length > 0) branch = `HEAD (${short})`;
+  }
+  const counts = await aheadBehind(repoPath);
   return {
     branch,
     changedFiles: parseStatusChangedFiles(status.stdout),

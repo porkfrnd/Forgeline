@@ -83,6 +83,7 @@ body {
 .repo-item { border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--spacing-2); background: var(--color-bg); }
 .repo-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
 .repo-status { display: block; color: var(--color-muted); font-family: var(--font-code); font-size: 12px; }
+.live-note { color: var(--color-warn); font-size: 12px; margin: var(--spacing-2) 0 0; }
 @media (max-width: 1024px) {
   .body { grid-template-columns: 1fr; }
   .sidebar { border-right: none; border-bottom: 1px solid var(--color-border); }

@@ -8,6 +8,8 @@ import { createAuth, parseCookie, type AuthManager } from "./session.js";
 import { RepoRegistry, type RepoEntry } from "./registry.js";
 import { scanRepos, pathExists } from "./scan/scan.js";
 import { summarizeRepos } from "./repo-summary.js";
+import { RepoQueue } from "./queue.js";
+import { LiveWatcher, type LiveMode } from "./live/watcher.js";
 import { resolveRealpath, stillInside } from "./paths.js";
 
 /** Largest repo file the preview route will serve (1 MiB). Milestone 3
@@ -22,8 +24,12 @@ export interface ServerHandle {
   token: string;
   auth: AuthManager;
   registry: RepoRegistry;
+  queue: RepoQueue;
+  live: LiveWatcher;
   /** Mint a fresh bootstrap URL (used when the terminal user presses Enter). */
   refreshUrl: () => string | null;
+  /** Stop accepting connections and release every file watcher. */
+  close: () => Promise<void>;
 }
 
 const MIME: Record<string, string> = {
@@ -106,12 +112,65 @@ function securityHeaders(): Record<string, string> {
 export interface CreateAppOptions {
   auth?: AuthManager;
   registry?: RepoRegistry;
+  /** Injected by tests; a fresh one is created otherwise. */
+  queue?: RepoQueue;
+  /** Filled in by `createApp` so the caller can stop watching on shutdown. */
+  handles?: ServerHandles;
+}
+
+/** The pieces `createApp` builds that outlive a request. Returned through
+ *  `CreateAppOptions.handles` so `startServer` can close them cleanly. */
+export interface ServerHandles {
+  queue: RepoQueue;
+  live: LiveWatcher;
 }
 
 export function createApp(getPort: () => number, opts: CreateAppOptions = {}): Hono {
   const auth = opts.auth ?? createAuth();
   const registry = opts.registry ?? new RepoRegistry();
+  const queue = opts.queue ?? new RepoQueue();
   const app = new Hono();
+
+  // Live updates: one watcher over every registered repo's `.git` bookkeeping
+  // files, coalesced, pushing real rows over the authenticated SSE endpoint.
+  // The DOM lib's WritableStreamDefaultController is not generic and carries
+  // no `enqueue` in this config, so the writable side of an SSE stream is
+  // typed structurally here rather than by name.
+  type SseController = {
+    enqueue: (chunk: Uint8Array) => void;
+    close: () => void;
+  };
+  const streams = new Set<SseController>();
+  const sseEncoder = new TextEncoder();
+  const pushEvent = (name: string, data: unknown): void => {
+    if (streams.size === 0) return;
+    const frame = `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const stream of streams) {
+      try {
+        stream.enqueue(sseEncoder.encode(frame));
+      } catch {
+        // A client that vanished mid-write is dropped by the abort handler.
+      }
+    }
+  };
+  const live = new LiveWatcher(async (repoPaths) => {
+    const rows = await summarizeRepos(
+      repoPaths
+        .map((path) => registry.list().find((entry) => entry.path === path))
+        .filter((entry): entry is RepoEntry => entry !== undefined)
+        .map((entry) => ({ entry })),
+      queue,
+    );
+    if (rows.length > 0) pushEvent("repos", { repos: rows });
+  });
+  if (opts.handles) {
+    opts.handles.queue = queue;
+    opts.handles.live = live;
+  }
+  /** Keep the watcher pointed at whatever the registry currently holds. */
+  const syncLive = (): void => {
+    live.setRepos(registry.list().map((entry) => entry.path));
+  };
 
   app.use("*", async (c, next) => {
     const port = getPort();
@@ -221,7 +280,13 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       }
       alive.push(entry);
     }
-    return c.json({ repos: await summarizeRepos(alive.map((entry) => ({ entry }))) });
+    syncLive();
+    return c.json({
+      repos: await summarizeRepos(
+        alive.map((entry) => ({ entry })),
+        queue,
+      ),
+    });
   });
 
   // Scan picked root folders and register what is found. The browser sends
@@ -245,7 +310,8 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       if (!entry) continue;
       registered.push({ entry, name: repo.name });
     }
-    return c.json({ repos: await summarizeRepos(registered) });
+    syncLive();
+    return c.json({ repos: await summarizeRepos(registered, queue) });
   });
 
   // Milestone 2 will register scanned repos server-side. This endpoint exists
@@ -258,6 +324,7 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     }
     const entry = await registry.register(body.path);
     if (!entry) return c.notFound();
+    syncLive();
     return c.json({ id: entry.id });
   });
 
@@ -305,15 +372,26 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     }
   });
 
-  app.get("/api/events", (c) => {
+  // Live updates over SSE. Authenticated like every other /api/* route, and
+  // the only route that stays open. On connect it states the live mode
+  // ("watching" or the polling fallback) and pushes a full snapshot; after
+  // that it pushes only the repos whose .git bookkeeping files changed, so a
+  // `git checkout` is one small frame rather than a full reload.
+  app.get("/api/events", async (c) => {
+    syncLive();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         const encoder = new TextEncoder();
-        controller.enqueue(encoder.encode(": connected\n\nretry: 3000\n\n"));
+        const mode: LiveMode = live.getMode();
+        controller.enqueue(
+          encoder.encode(`: connected\n\nretry: 3000\nevent: mode\ndata: ${JSON.stringify({ mode })}\n\n`),
+        );
+        streams.add(controller);
         let open = true;
         const stop = () => {
           if (!open) return;
           open = false;
+          streams.delete(controller);
           try {
             controller.close();
           } catch {
@@ -324,6 +402,16 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
         if (signal) {
           signal.addEventListener("abort", stop);
         }
+        // The client has no way to tell us it hung up other than closing, so
+        // drop the controller on cancel too.
+        void summarizeRepos(registry.list().map((entry) => ({ entry })), queue).then((rows) => {
+          if (!open) return;
+          try {
+            controller.enqueue(encoder.encode(`event: repos\ndata: ${JSON.stringify({ repos: rows })}\n\n`));
+          } catch {
+            stop();
+          }
+        });
       },
     });
     return new Response(stream, {
@@ -378,7 +466,8 @@ export async function startServer(opts: StartOptions): Promise<ServerHandle> {
   const registry = new RepoRegistry();
   registry.setRoots(opts.roots ?? []);
   let actualPort = opts.port;
-  const app = createApp(() => actualPort, { auth, registry });
+  const handles: ServerHandles = { queue: new RepoQueue(), live: new LiveWatcher(() => {}) };
+  const app = createApp(() => actualPort, { auth, registry, handles });
   const server = serve({ fetch: app.fetch, port: opts.port, hostname: opts.hostname });
   await new Promise<void>((resolvePromise, reject) => {
     const onError = (err: Error) => {
@@ -401,7 +490,18 @@ export async function startServer(opts: StartOptions): Promise<ServerHandle> {
     if (fresh === null) return null;
     return `http://localhost:${actualPort}/?t=${fresh}`;
   };
-  return { app, server, actualPort, token, auth, registry, refreshUrl };
+  const close = async (): Promise<void> => {
+    await handles.live.stop();
+    await new Promise<void>((resolve) => {
+      const srv = server as unknown as {
+        closeAllConnections?: () => void;
+        close: (cb: () => void) => void;
+      };
+      srv.closeAllConnections?.();
+      srv.close(() => resolve());
+    });
+  };
+  return { app, server, actualPort, token, auth, registry, queue: handles.queue, live: handles.live, refreshUrl, close };
 }
 
 export { resolveRealpath, stillInside };

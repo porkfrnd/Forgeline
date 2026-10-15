@@ -1,7 +1,7 @@
 # Architecture
 
-> Last updated: 2026-10-14
-> Describes commit: 8d96914ded9e91bb1c5da09438a2fb7ff50fb260 (Milestone 1 Skeleton, first commit)
+> Last updated: 2026-10-15
+> Describes commit: 27b169a (Milestone 2 slice 1) plus uncommitted slice-2 work
 
 How the code fits together today, and where things will live as milestones land. Sections that describe not-yet-built modules say so explicitly.
 
@@ -18,22 +18,30 @@ forgeline/
     make-fixture-repos.ts   builds throwaway git repos in a temp dir (real git, local bare remotes)
     lint-copy.js            scans UI strings + README for banned phrases (docs/ + the list are skipped)
     capture-screenshots.mjs starts the built CLI, drives Chromium, writes screenshots, reports console errors
+    capture-screenshots-m2.mjs builds three throwaway repos, scans them through the real API, and screenshots the populated dashboard
   src/
     cli.ts                  parse args (commander), check git >= 2.31, start server, print banner, open browser, SIGINT shutdown
     server/
-      index.ts              createApp(token, getPort): security middleware, /api/* auth, health, SSE, static serving + SPA fallback; startServer() binds 127.0.0.1 and resolves bind errors
+      index.ts              createApp(...): security middleware, /api/* auth, health, SSE, static serving + SPA fallback; startServer() binds 127.0.0.1 and resolves bind errors
       git/
         git.ts              the ONLY module that runs git. runGit(args,{cwd,env}) -> {stdout,stderr,exitCode,command}. LC_ALL=C, GIT_TERMINAL_PROMPT=0, GIT_EDITOR=true. spawn arg arrays only.
-      routes/               (Milestone 2+) repos, status, commits, branches, stash, undo, auth, releases
-      scan/                  (Milestone 2) repo discovery + watching
+      queue.ts              per-repo single-writer queue. Every status read for a repo goes through it; different repos stay concurrent.
+      repo-summary.ts       summarizeRepo/summarizeRepos: one dashboard row per repo, shared by GET /api/repos and POST /api/repos/scan. Never throws.
+      registry.ts           opaque repo id -> discovered path, plus the inside-root check
+      paths.ts              isInside, resolveRealpath, safeRepoChildPath, stillInside
+      scan/                 scan.ts: bounded repo discovery. pathExists() prunes vanished repos.
+      live/
+        watcher.ts          LiveWatcher: chokidar over .git/HEAD, .git/index, refs + packed-refs; debounced; 3s polling fallback
+      routes/               (Milestone 3+) status, commits, branches, stash, undo, auth, releases
       auth/                  (Milestone 6) provider interface, github, gitlab, keychain
       releases/              (Milestone 8) version bump, changelog, tagging
     web/
       main.tsx              React entry; mounts <ThemeProvider><App/></ThemeProvider>
       src/app/App.tsx       layout shell: header, sidebar, tab bar (Changes/History/Branches/Releases), theme toggle
+      src/app/useRepos.ts   dashboard list driven by EventSource over /api/events, with a slow poll fallback
       src/components/       Header, Sidebar (more in later milestones)
       src/theme/            ThemeProvider (paper/midnight), tokens.css (design tokens + base styles)
-    shared/types.ts         RepoStatus, Change, Commit, ForgeError, Snapshot (shared shapes)
+    shared/types.ts         RepoStatus, RepoSummary, Change, Commit, ForgeError, Snapshot (shared shapes)
   tests/e2e/                Playwright specs + global setup/teardown that run the real built CLI
 ```
 
@@ -43,7 +51,7 @@ forgeline/
 2. `src/server/index.ts` middleware rejects any request whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>`. Changing methods additionally require an allowed `Origin` and `Content-Type: application/json`.
 3. `requireAuth` on `/api/*` rejects requests without the `session` cookie (401).
 4. A route module calls into `src/server/git/git.ts` (the only place that spawns git), which returns `{stdout, stderr, exitCode, command}` and never throws. Parsers (Milestone 2) turn stable, machine-readable git output into typed data. On failure, routes return a `ForgeError` (`{code,title,explanation,fixes,raw}`) rather than a bare string.
-5. Live updates flow back over the SSE stream at `/api/events`. Today it is authenticated and emits an initial comment; real repo-status events arrive in Milestone 2.
+5. Live updates flow back over the SSE stream at `/api/events`. On connect it sends `event: mode` (`watching`, or `polling` when the fallback has engaged) and a full `event: repos` snapshot; after that it pushes only the repos whose watched `.git` files changed, debounced by `LiveWatcher`. The browser consumes it with `EventSource` in `useRepos`, and falls back to a 15-second poll only if the stream cannot be established.
 
 Static serving: `GET *` first handles the `?t=` token exchange (303 + Set-Cookie, token stripped). Otherwise it serves the matching file from `dist/web`, then falls back to `index.html` for client-side routes (except missing `/assets/*`, which 404). The web root is resolved relative to the compiled server: `join(dirname(index.js), "..", "web")`.
 
@@ -51,12 +59,14 @@ Static serving: `GET *` first handles the `?t=` token exchange (303 + Set-Cookie
 
 - One module runs git; `spawn` with argument arrays only; no shell strings.
 - Fixed env on every call: `LC_ALL=C`, `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`. Background status calls also set `GIT_OPTIONAL_LOCKS=0` (Milestone 2).
-- One write at a time per repo via a per-repo queue (Milestone 2/4). Reads may run in parallel.
+- One write at a time per repo via `RepoQueue` (`src/server/queue.ts`). Every status read for a repo goes through it; reads in different repos still run in parallel. A rejected task does not poison the chain, and each caller sees its own result.
+- Reads stay cheap: `GIT_OPTIONAL_LOCKS=0` keeps a `status` from writing the index, so the watcher never sees its own reads. The branch name comes from the `status --porcelain=v2 --branch` header (`parseStatusBranch`), so a normal refresh is `status` plus `rev-list`, not three processes.
+- `LiveWatcher` watches `.git` once with `depth: 3` and an `ignored` predicate admitting only `HEAD`, `index`, `packed-refs`, and the `refs` subtree. Do **not** pass `[.git/HEAD, .git/index, .git/refs]` as separate targets: chokidar computes a common base for the path set and applies `depth` from there, which spends the budget walking back into `.git` and silently never reports changes inside `refs/`.
 - Check-then-resolve is not a sandbox. The browser never sends raw paths — only opaque repo IDs plus repo-relative strings validated by `safeRepoChildPath` (rejects `..`, absolute paths, and leading `-`), then re-resolved with `resolveRealpath` and re-checked with `stillInside` immediately before git runs. This guards against a mistaken click, a crafted link, or an adversarial filename being turned into an out-of-root or option-shaped git argument — not against a hostile local user, who can already read the files, swap a symlink between the two checks, or run git directly. Rejections answer 400/403 with a plain explanation.
 
 ## Journal and snapshots (Milestone 4)
 
-- Location: the OS app-data folder for Forgeline, never inside a repo. The exact path is chosen in Milestone 2 when settings storage is added (candidates: `~/.config/forgeline`, `~/Library/Application Support/forgeline`, `%APPDATA%/forgeline`).
+- Location: the OS app-data folder for Forgeline, never inside a repo. Not chosen yet — candidates: `~/.config/forgeline`, `~/Library/Application Support/forgeline`, `%APPDATA%/forgeline`. The same module should also hold persisted settings and the scan cache (gaps 9 and 13 in `docs/status.md`), so they land together.
 - Journal: one entry per repo-changing action (repo path, timestamp, plain-English description, git command, refs before/after).
 - Snapshots: built from a temp index (`GIT_INDEX_FILE`, `git add -A`, `git write-tree`, `git commit-tree`), stored under `refs/forgeline/snapshots/<timestamp>`; the real index is also recorded with `git write-tree` when conflict-free. Prune only when older than 30 days and outside the latest 50. Recovery contracts (exact undo / compensating / irreversible) will be listed per action here.
 
@@ -68,4 +78,4 @@ Not implemented yet. When built, the exact 0-100 formula (inputs: last commit ag
 
 - **A new error rule:** add an entry to the rules array in `src/server/git/errors.ts` (Milestone 5). Each rule is `{ pattern: (stderr, command) => boolean, build: (raw) => ForgeError }`. The pattern must come from real git output captured in a fixture; remote-only messages are marked `source: docs` until seen live.
 - **A new theme:** add a `[data-theme="<name>"]` block in `src/web/src/theme/tokens.css` (or a file under `src/web/themes/`) that sets the same token names, and add the name to `ThemeName` in `src/web/src/theme/ThemeProvider.tsx`. Adjust colors to meet WCAG AA.
-- **A new API route:** add a handler in a module under `src/server/routes/` and register it in `src/server/index.ts`. Go through `git.ts` for any git call; return `ForgeError` on failure.
+- **A new API route:** add a handler in a module under `src/server/routes/` and register it in `src/server/index.ts`. Go through `git.ts` for any git call, through `RepoQueue` for anything touching a repo, and return `ForgeError` on failure. If the route changes which repos exist, call `syncLive()` so the watcher follows.

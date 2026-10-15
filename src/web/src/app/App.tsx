@@ -8,14 +8,14 @@ const TABS = ["Changes", "History", "Branches", "Releases"] as const;
 
 export function App() {
   const { theme, setTheme } = useTheme();
-  const { repos, error } = useRepos();
+  const { repos, error, liveMode } = useRepos();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Changes");
   const next = theme === "paper" ? "midnight" : "paper";
   return (
     <div className="shell">
       <Header repoCount={repos.length} />
       <div className="body">
-        <Sidebar repos={repos} loadError={error} />
+        <Sidebar repos={repos} loadError={error} liveMode={liveMode} />
         <main className="main">
           <div className="tabbar" role="tablist" aria-label="Repository views">
             {TABS.map((t) => (

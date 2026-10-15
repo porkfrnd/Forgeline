@@ -100,3 +100,42 @@ One dated entry per loop run. Never rewrite old entries. Newest entries go at th
 
 **Commit:** `27b169a` — `feat(m2): repo discovery, git read helpers, live dashboard list`
 **Push:** `git push origin main` succeeded (`51cfa31..27b169a main -> main`); `git ls-remote origin main` returns `27b169a4353d7c38608afc355aa5398877538de1`, matching local `main`.
+
+---
+
+## 2026-10-15 — Milestone 2, slice 2: live updates, per-repo queue, README
+
+**Slice:** live updates over SSE, the single-writer queue, one fewer git process per refresh, and a real README.
+
+**Context:** slice 1 shipped a dashboard that refreshed on a 3-second client-side timer. The spec wants file watching with a polling fallback, a per-repo single-writer queue, and pushes over the existing SSE endpoint, which at that point only sent a comment and a `retry`.
+
+**Plan (checklist):**
+- [x] Add `src/server/queue.ts`: per-repo single-writer queue, used by every status read.
+- [x] Add `chokidar` (v4.0.3) and `src/server/live/watcher.ts`: watch `.git/HEAD`, `.git/index`, the `refs` subtree and `packed-refs`, debounce, 3s polling fallback with a visible note.
+- [x] Make `/api/events` push real rows: mode + full snapshot on connect, then only changed repos.
+- [x] Drive the dashboard from `EventSource`, falling back to a slow poll if the stream cannot be established.
+- [x] Read the branch from the `status --porcelain=v2 --branch` header instead of a second `rev-parse`.
+- [x] Stop watchers and the server cleanly on Ctrl+C; guard against a second signal.
+- [x] Unit tests for the queue, the branch parser, and the watcher; e2e for the SSE push.
+- [x] Capture real M2 screenshots and write `README.md`.
+- [x] Run the verify loop, update handoff docs, commit + push.
+
+**Steps and results:**
+1. Work — see checklist. `summarizeRepo` takes an optional queue so the read path serializes per repo while different repos still run concurrently.
+2. Static check — `typecheck`, `lint`, `lint:copy` all pass.
+3. Unit test — `vitest run`: 58 passed (9 files; was 43).
+4. Browser test — `playwright test`: 38 passed across desktop (1440px) and narrow (800px) — 19 tests x 2 widths.
+5. Screenshots — `node scripts/capture-screenshots-m2.mjs` wrote 4 PNGs to `screenshots/milestone-2/` with three real throwaway repos (clean, uncommitted, unpushed commit) scanned through the real API. Console was clean. **Not visually reviewed:** the model that wrote this cannot view images, so the screenshots are unverified by eye and should be checked by a human before being treated as approved.
+6. Record and commit — see `docs/status.md` for the next step.
+
+**The interesting bug.** Watching `[.git/HEAD, .git/index, .git/refs]` as three separate chokidar targets silently failed: chokidar computes a common base for the path set and applies `depth` from there, so the depth budget was spent walking back down into `.git` and changes inside `refs/` were never reported. `getWatched()` showed the repository root being watched instead of the ref files. Fixed by watching `.git` once with `depth: 3` and an `ignored` predicate that admits only `HEAD`, `index`, `packed-refs`, and the `refs` subtree — verified to fire on all three and stay silent for `.git/config`, `.git/objects`, and working-tree files. Both behaviours are now tests.
+
+**Two smaller fixes along the way:** `src/server/repo-summary.ts` had imported one directory level too deep; the DOM lib's `WritableStreamDefaultController` is neither generic nor equipped with `enqueue` in this config, so the SSE writable side is typed structurally. One e2e assertion also used `res.arrayBuffer()` on an `APIResponse`, which has no such member.
+
+**New tests:** `RepoQueue` (same-repo order, cross-repo concurrency, rejection does not poison the chain, per-caller results, pending/forget); `parseStatusBranch` (branch, detached, missing header, name with spaces); `LiveWatcher` (HEAD change, burst coalescing, unwatched repo ignored, set membership changes, refs/index watched, `.git` noise ignored); e2e "a change in a watched repo reaches the dashboard over SSE".
+
+**Dependency:** `chokidar@4.0.3` added to `dependencies` and the lockfile. `npm audit` is unchanged by it — the 6 reported vulnerabilities are pre-existing dev-dependency issues in vitest's tinypool chain, confirmed by stashing the change and re-auditing.
+
+**README:** rewritten from a two-line stub into the real thing — principles, status with an explicit "not published" warning, requirements, run and port rules, how scanning and live updates work, the security model, development commands, layout, and the docs map. Screenshots embedded are from `screenshots/milestone-2/` (see the unverified-by-eye note above).
+
+**Gaps recorded, not fixed:** the polling fallback has no test (new gap 12); settings and the scan cache are still memory-only and want a shared app-data module (gaps 9 and 13); the "Choose folders" button is still static (gap 10).

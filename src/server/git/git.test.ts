@@ -3,6 +3,7 @@ import {
   aheadBehind,
   currentBranch,
   parseRevListCount,
+  parseStatusBranch,
   parseStatusChangedFiles,
   repoStatusFields,
 } from "./git.js";
@@ -19,6 +20,28 @@ describe("parseStatusChangedFiles", () => {
   it("counts zero when the tree is clean", () => {
     const out = "# branch.oid abc\0# branch.head main\0# branch.ab +0 -0\0";
     expect(parseStatusChangedFiles(out)).toBe(0);
+  });
+});
+
+describe("parseStatusBranch", () => {
+  it("reads the branch name from the header", () => {
+    const out = "# branch.oid abc\0# branch.head main\0# branch.ab +0 -0\0";
+    expect(parseStatusBranch(out)).toBe("main");
+  });
+
+  it("reports HEAD for a detached head", () => {
+    const out = "# branch.oid abc\0# branch.head (detached)\0";
+    expect(parseStatusBranch(out)).toBe("HEAD");
+  });
+
+  it("returns null when the header is missing", () => {
+    expect(parseStatusBranch("1 .M N... 100644 100644 100644 a a a.txt\0")).toBeNull();
+    expect(parseStatusBranch("# branch.head \0")).toBeNull();
+  });
+
+  it("handles a branch name containing spaces", () => {
+    const out = "# branch.head feature/my branch\0";
+    expect(parseStatusBranch(out)).toBe("feature/my branch");
   });
 });
 
