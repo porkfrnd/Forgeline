@@ -174,3 +174,31 @@ One dated entry per loop run. Never rewrite old entries. Newest entries go at th
 
 **Commit:** design foundation pass.
 **Push:** after each step, per Update 2 §2.
+
+---
+
+## 2026-10-15 — M3 foundation: diff parsing, README screenshots of new themes
+
+**Slice:** Milestone 3 commit-flow foundation + README refresh with the new design screenshots.
+
+**Context:** the next commit-flow slice needs to read what git changed and render it. Before any UI, I needed a trustworthy changed-file list and a unified-diff parser that handles the file shapes that break viewers.
+
+**Plan (checklist):**
+- [x] `git.ts`: runGit timeouts (PATIENCE_MS 15s local / IMPATIENCE_MS 120s fetch/push), SIGKILL on timeout, `withPaths()` appends `--` before path args so a path beginning with `-` can never be read as an option.
+- [x] `diff.ts`: `parseStatusFiles()` from `status --porcelain=v2 -z` into staged/unstaged/conflicted change records (renames via consecutive NUL records); `parseUnifiedDiff()` into numbered hunks with add/del/context line numbers, binary-file detection, `\ No newline at end of file` markers; `readChangedFiles()`, `readFileDiff(staged|unstaged)`, `readRepoDiff()`.
+- [x] `diff.test.ts`: 14 tests against real git covering CRLF, missing trailing newline, renames, binary blobs, mode-only changes, symlinks, non-Latin and spaced paths, staged-vs-unstaged separation, unknown paths.
+- [x] `README.md`: hero screenshots replaced with the new themes (Lagoon dark, Cathode dark, Paper light, Nord dark, Mono solid, Effects Off) captured from the running app; updated themes table (family × modes) and capture command; updated Status and Layout sections for the new design.
+
+**Steps and results:**
+1. Work — see checklist above.
+2. Contrast gate — `npm run check:contrast` green (297 text/graphic pairs + 264 lane checks across 7 families).
+3. Typecheck, lint, lint:copy — pass.
+4. Unit test — `vitest run`: 72 passed (58 existing + 14 new diff tests).
+5. Frontend build — `vite build` succeeds.
+6. Browser test — `playwright test`: 40 passed across desktop and narrow.
+7. Screenshots — `scripts/capture-screenshots-design.mjs` seeds `localStorage.forgeline-appearance` before the app boots and captures the Workbench across themes; all seven are under 1MB.
+
+**Verified:** `npm run verify` fully green (contrast, typecheck, lint, lint:copy, 72 unit, 40 e2e) on Node v24.21.0 / git 2.47.3 / Linux.
+
+**Commit:** `6012010` — `feat(server): parse changed-file records and unified diffs`.
+**Push:** `git push origin main` succeeded (`b44f0fd..6012010 main -> main`); `git ls-remote origin main` matches local `main`.

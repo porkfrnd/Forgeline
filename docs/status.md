@@ -1,7 +1,7 @@
 # Status
 
 > Last updated: 2026-10-15
-> Describes commit: 8e58b0b (Milestone 2 complete) plus uncommitted run-plan work
+> Describes commit: 6012010 (Milestone 3 foundation: diff parsing)
 
 ## Run plan (Update 2, section 1)
 
@@ -27,8 +27,16 @@ Gaps closed along the way: the "Choose folders" gap became a working Scan
 folder control, and `GET /api/health` now reports `gitVersion` and `liveMode`
 for the status bar.
 
+**Done:** M3.1 — diff read, unstaged/staged file list, hunk fixture suite.
+`src/server/git/diff.ts` parses `status --porcelain=v2 -z` into change
+records (renames via consecutive NUL records) and unified-diff output into
+numbered hunks with binary detection and no-EOL markers; `runGit` now has
+timeouts and appends `--` before path args. 14 tests pass against real git
+(CRLF, no-trailing-newline, renames, binary, mode changes, symlinks,
+non-Latin/spaced paths, staged vs unstaged).
+
 Remaining slices for the two milestones:
-| M3.1 | Diff read, unstaged/staged file list, hunk fixture suite | 2 h |
+| M3.1 | Diff read, unstaged/staged file list, hunk fixture suite | done |
 | M3.2 | Stage and unstage, including the hunk toggle | 1.5 h |
 | M3.3 | Diff viewer: inline, split, file | 1.5 h |
 | M3.4 | Commit composer, commit action, sanity-check card | 2 h |
@@ -51,9 +59,9 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 
 | # | Milestone | State |
 | --- | --- | --- |
-| 1 | Skeleton: CLI + port logic, server serves the React app, theme tokens, layout shell (Paper + Midnight) | done (this session) |
-| 2 | Git core: `git.ts` wrapper, parsers, repo scanning, dashboard with live status | done (this session) |
-| 3 | Commit flow: file list, hunk staging, diff viewer, commit, sanity check card | not started |
+| 1 | Skeleton: CLI + port logic, server serves the React app, theme tokens, layout shell (Paper + Midnight) | done |
+| 2 | Git core: `git.ts` wrapper, parsers, repo scanning, dashboard with live status | done |
+| 3 | Commit flow: file list, hunk staging, diff viewer, commit, sanity check card | in progress |
 | 4 | Safety: action journal, snapshots, undo timeline, rescue mode, confirmation previews | not started |
 | 5 | Error translator with the full starter catalogue | not started |
 | 6 | Remote and sign-in: pull, push, GitHub device flow, lazy prompt | not started |
