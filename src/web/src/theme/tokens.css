@@ -680,3 +680,35 @@ body {
 }
 .button.link { background: none; border-color: transparent; color: var(--accent); padding: 2px 0; }
 .button.link:hover { border-color: var(--accent); }
+
+/* ---------- error card (Milestone 5) ---------- */
+/* A failed git action becomes a card: a title, a sentence, buttons that act,
+   and the raw output one click away. It sits above the worktable rather than
+   replacing it, so nothing the user was doing disappears underneath it. */
+.work-error { display: flex; flex-direction: column; gap: 8px; }
+.error-card { border-left: var(--hairline-w) solid var(--status-conflict); }
+.error-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
+.error-fixes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.error-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 8px; }
+/* Monospace spelled out, because --font-mono does not exist and a missing
+   variable silently falls back to the body font. */
+.error-raw {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+  background: var(--base);
+  border: var(--hairline-w) solid var(--hairline);
+  border-radius: var(--radius-sm);
+}
+.work-gitcheck { margin: 0; }
+
+/* The identity form the "set name and email" fix opens. */
+.identity-form { display: flex; flex-direction: column; gap: 8px; }
+.identity-form .input { width: 100%; }

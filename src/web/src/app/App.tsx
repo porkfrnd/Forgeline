@@ -11,7 +11,18 @@ import { FileList } from "../components/FileList";
 import { DiffViewer } from "../components/DiffViewer";
 import { CommitComposer } from "../components/CommitComposer";
 import { UndoTimeline } from "../components/UndoTimeline";
+import { ErrorCard } from "../components/ErrorCard";
 import { History } from "lucide-react";
+import {
+  abortMerge,
+  checkGitProcesses,
+  initRepo,
+  recordErrorShown,
+  recordFixOutcome,
+  removeLock,
+  setIdentity,
+  type ActionError,
+} from "./git.js";
 
 /**
  * The Workbench shell.
@@ -28,6 +39,18 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
+  /* A failed action surfaces as a plain-English card rather than as raw git
+     text. `errorId` is its history id, so the fix that gets tried can be
+     recorded against the error that offered it. */
+  const [activeError, setActiveError] = useState<ActionError | null>(null);
+  const [activeErrorId, setActiveErrorId] = useState<string | null>(null);
+  const [fixRunning, setFixRunning] = useState(false);
+  /** The identity form, shown only when a "set name and email" fix is used. */
+  const [identityPrompt, setIdentityPrompt] = useState(false);
+  /** What the running-git check found, so the remove-lock fix can say why. */
+  const [gitCheck, setGitCheck] = useState<{ running: string[]; title: string } | null>(null);
+  const [identityName, setIdentityName] = useState("");
+  const [identityEmail, setIdentityEmail] = useState("");
   const settingsRef = useRef<HTMLButtonElement>(null);
   const journalRef = useRef<HTMLButtonElement>(null);
 
@@ -57,6 +80,116 @@ export function App() {
     if (selectedId === null) return;
     void fetchChanges(selectedId).then(setFiles, () => setFiles([]));
   }, [selectedId]);
+
+  /** Show the card for a failed action and record it in history. */
+  const reportError = (error: ActionError): void => {
+    setActiveError(error);
+    void recordErrorShown(selectedId, error).then(setActiveErrorId, () => setActiveErrorId(null));
+  };
+
+  const dismissError = (): void => {
+    setActiveError(null);
+    setActiveErrorId(null);
+  };
+
+  /** Run the fix a button stood for, and record whether it worked. */
+  const runFix = async (fixId: string): Promise<void> => {
+    if (selectedId === null) return;
+    setFixRunning(true);
+    try {
+      // `commit-first` is not a git action: it opens the composer, which is
+      // the thing that fix actually needs.
+      if (fixId === "commit-first") {
+        window.requestAnimationFrame(() => {
+          document.querySelector<HTMLTextAreaElement>(".commit-composer textarea")?.focus();
+        });
+        void recordFixOutcome(activeErrorId, fixId, true);
+        dismissError();
+        return;
+      }
+
+      // Looking for a running git is informational: it answers whether the
+      // lock is really stale before the user decides to remove it.
+      if (fixId === "check-running-git") {
+        setGitCheck(await checkGitProcesses(selectedId));
+        return;
+      }
+      if (fixId === "set-identity") {
+        setIdentityPrompt(true);
+        return;
+      }
+
+      const call =
+        fixId === "init-here" ? initRepo(selectedId)
+        : fixId === "abort-merge" ? abortMerge(selectedId)
+        : fixId === "remove-lock" ? removeLock(selectedId)
+        : null;
+
+      if (call === null) {
+        // A fix with no action yet. Reported rather than silently ignored,
+        // because a button that does nothing is worse than no button.
+        reportError({
+          ok: false,
+          code: "fix-unavailable",
+          title: "That fix isn't available in Forgeline yet.",
+          explanation:
+            "This repair has to be run from the command line for now. The git output below shows exactly what to run.",
+          raw: activeError?.raw ?? activeError?.command,
+        });
+        return;
+      }
+
+      const result = await call;
+      if (result.ok) {
+        void recordFixOutcome(activeErrorId, fixId, true);
+        dismissError();
+        await refreshChanges();
+        return;
+      }
+      // The fix itself failed. The history records that, which is the whole
+      // point of keeping one: a remedy that doesn't work should stop being
+      // offered first.
+      void recordFixOutcome(activeErrorId, fixId, false);
+      reportError(result);
+    } finally {
+      setFixRunning(false);
+    }
+  };
+
+  /** Submit the identity form: sets it, then records the fix as working. */
+  const submitIdentity = async (): Promise<void> => {
+    if (selectedId === null || identityName.trim().length === 0) return;
+    setFixRunning(true);
+    try {
+      const result = await setIdentity(selectedId, identityName.trim(), identityEmail.trim());
+      if (result.ok) {
+        void recordFixOutcome(activeErrorId, "set-identity", true);
+        dismissError();
+        setIdentityPrompt(false);
+        setIdentityName("");
+        setIdentityEmail("");
+        await refreshChanges();
+        return;
+      }
+      void recordFixOutcome(activeErrorId, "set-identity", false);
+      reportError(result);
+    } finally {
+      setFixRunning(false);
+    }
+  };
+
+  /**
+   * Fixes this build can really run. Everything else the server offers is left
+   * undrawn, which is what keeps every button a working feature.
+   */
+  const AVAILABLE_FIXES = [
+    "init-here",
+    "commit-first",
+    "abort-merge",
+    "remove-lock",
+    "check-running-git",
+    "set-identity",
+  ];
 
   const refreshChanges = async (): Promise<void> => {
     if (selectedId === null) return;
@@ -222,6 +355,73 @@ export function App() {
           </p>
         </section>
 
+        {activeError !== null ? (
+          <section className="work-error">
+            <ErrorCard
+              error={activeError}
+              availableFixes={AVAILABLE_FIXES}
+              onFix={(fixId) => void runFix(fixId)}
+              onDismiss={dismissError}
+            />
+
+            {identityPrompt ? (
+              <form
+                className="panel identity-form"
+                data-ticks
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void submitIdentity();
+                }}
+              >
+                <p className="label">Your name and email</p>
+                <p className="message muted">
+                  Git writes these into every commit you make. They stay in this
+                  repository's own settings, not in Forgeline.
+                </p>
+                <input
+                  className="input"
+                  value={identityName}
+                  placeholder="Ada Lovelace"
+                  aria-label="Your name"
+                  onChange={(e) => setIdentityName(e.target.value)}
+                />
+                <input
+                  className="input mono"
+                  value={identityEmail}
+                  placeholder="ada@example.com"
+                  aria-label="Your email"
+                  onChange={(e) => setIdentityEmail(e.target.value)}
+                />
+                <div className="error-fixes">
+                  <button
+                    type="submit"
+                    className="button primary"
+                    disabled={fixRunning || identityName.trim().length === 0}
+                  >
+                    {fixRunning ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => setIdentityPrompt(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {gitCheck !== null ? (
+              <p className="message muted work-gitcheck">
+                {gitCheck.title}
+                {gitCheck.running.length > 0
+                  ? " Wait for it to finish, or close it before removing the lock."
+                  : " The lock is safe to remove."}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
+
         <section className="panel worktable" data-ticks>
           {selectedId === null ? (
             <>
@@ -236,6 +436,7 @@ export function App() {
               repoId={selectedId!}
               onSelect={setSelectedFile}
               onChange={refreshChanges}
+              onError={reportError}
             />
           ) : (
             <DiffViewer
@@ -249,6 +450,7 @@ export function App() {
               repoId={selectedId!}
               stagedFiles={stagedFiles}
               onCommitted={refreshChanges}
+              onError={reportError}
             />
           )}
         </section>

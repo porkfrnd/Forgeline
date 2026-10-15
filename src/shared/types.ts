@@ -26,11 +26,21 @@ export interface Commit {
   date: string;
 }
 
+/** One fix button on an error card. `id` is the stable identifier the
+ *  interface maps to a real action; `label` is the plain-English text the
+ *  user reads. A rule may declare fixes for features that don't exist yet —
+ *  whether a button is drawn is the interface's decision, because it knows
+ *  what exists. Declaring them all keeps the catalogue complete. */
+export interface ErrorFix {
+  id: string;
+  label: string;
+}
+
 export interface ForgeError {
   code: string;
   title: string;
   explanation: string;
-  fixes: string[];
+  fixes: ErrorFix[];
   raw: string;
 }
 

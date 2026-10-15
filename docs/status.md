@@ -73,6 +73,7 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 | 2 | Git core: `git.ts` wrapper, parsers, repo scanning, dashboard with live status | done |
 | 3 | Commit flow: file list, hunk staging, diff viewer, commit, sanity check card | done (`milestone-3`) |
 | 4 | Safety: action journal, snapshots, undo timeline, rescue mode, confirmation previews | done (`milestone-4`) |
+| 5 | Error translator with the full starter catalogue | in progress |
 | 5 | Error translator with the full starter catalogue | not started |
 | 6 | Remote and sign-in: pull, push, GitHub device flow, lazy prompt | not started |
 | 7 | Branches, stash, history graph, blame, conflict resolver | not started |
@@ -84,7 +85,7 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 - Milestones 1–3 are complete and verified. Milestone 4 (Safety) is complete and verified as of this gate; the tag below is its proof.
 - **What works now, end to end:** discovering repositories in folders you pick; live branch / changed-file / ahead-behind counts over an authenticated SSE stream with a 3-second polling fallback; viewing changed files; full unified diffs for both staged and unstaged state; staging and unstaging whole files or individual hunks; committing with a sanity-check card that names every staged file; discarding local changes with a snapshot taken first; and an Undo timeline that lists every journaled action, shows the exact git command behind a toggle, and offers an Undo button only where recovery has been proven. Rescue mode snapshots, parks HEAD under a private backup ref, and resets to a clean tree.
 - **What does not exist yet:** the error translator (5), remotes and sign-in (6), branches/stash/history/blame/conflicts (7), the release manager (8), and polish (9). None of them have a control drawn, so nothing in the interface is a dead button.
-- Next slice is Milestone 5: **the error translator** with the full starter catalogue, built into `git.ts` so every caller that runs git speaks the same language.
+- Next slice is Milestone 6: **remote and sign-in** — pull, push, and the lazy GitHub device-flow prompt.
 
 ## Latest `verify` result
 

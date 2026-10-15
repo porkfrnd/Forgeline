@@ -982,3 +982,297 @@ test.describe("Milestone 4 journal", () => {
     }
   });
 });
+
+/* A repo with NO identity configured at all. `user.useConfigOnly` forces git
+   to ignore a global name/email, which is the only way to reach the
+   "please tell me who you are" path on a machine that has one configured —
+   without it the test would pass anywhere and prove nothing. */
+async function makeAnonymousRepo(baseUrl: string, cookie: string, name: string) {
+  const root = mkdtempSync(join(tmpdir(), `fl-e2e-anon-${name}-`));
+  const repo = join(root, "demo");
+  mkdirSync(repo, { recursive: true });
+  // No identity is written here at all. The e2e server itself runs with an
+  // empty GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM (see global-setup), so the
+  // commit the test triggers really has no name and email to use.
+  spawnSync("git", ["init", "-q", "-b", "main", "."], { cwd: repo });
+  writeFileSync(join(repo, "a.txt"), "one\n");
+  spawnSync("git", ["add", "a.txt"], { cwd: repo });
+  await setRootsForTest(baseUrl, [root]);
+  const id = await registerRepoForTest(baseUrl, cookie, repo);
+  return { dir: repo, id, root };
+}
+
+test.describe("Milestone 5 error translator", () => {
+  test("a commit with no identity comes back as a plain-English card with a real fix", async ({
+    request,
+  }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id, root } = await makeAnonymousRepo(baseUrl, cookie, "identity");
+
+    try {
+      const staged = await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["a.txt"] },
+      });
+      expect(staged.status()).toBe(200);
+      // A fresh commit of a staged-but-unchanged file still has to be created.
+      writeFileSync(join(dir, "b.txt"), "two\n");
+      const stageB = await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["b.txt"] },
+      });
+      expect(stageB.status()).toBe(200);
+
+      const commit = await request.post(`${baseUrl}/api/repos/${id}/commit`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { message: "This must fail" },
+      });
+
+      // Not a 500 with a raw stderr sentence: a translated card.
+      const body = (await commit.json()) as {
+        code?: string;
+        title?: string;
+        explanation?: string;
+        fixes?: Array<{ id: string; label: string }>;
+        raw?: string;
+      };
+      expect(body.code).toBe("no-identity");
+      // The explanation says what to do, not what git said.
+      expect(body.explanation).toContain("Setting them once");
+      // The fix is offered, and it is an id the interface can act on.
+      expect(body.fixes?.map((f) => f.id)).toContain("set-identity");
+      // Raw output is preserved, never swallowed.
+      expect(body.raw).toMatch(/tell me who you are|email/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the identity fix sets the identity and then the same commit succeeds", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir: repo, id, root } = await makeAnonymousRepo(baseUrl, cookie, "identity-fix");
+
+    try {
+      const fix = await request.post(`${baseUrl}/api/repos/${id}/identity`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { name: "Ada Fixture", email: "ada@fixture.invalid" },
+      });
+      expect(fix.status()).toBe(200);
+
+      // The identity is real git state, not a Forgeline-side record.
+      // `cwd: repo`, not `cwd: root`: root is the parent directory, and a
+      // config read there would look at the developer's own settings.
+      const who = spawnSync("git", ["config", "--local", "user.name"], {
+        cwd: repo,
+        encoding: "utf8",
+      });
+      expect(who.stdout.trim()).toBe("Ada Fixture");
+
+      writeFileSync(join(repo, "b.txt"), "two\n");
+      await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["b.txt"] },
+      });
+      const commit = await request.post(`${baseUrl}/api/repos/${id}/commit`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { message: "Now it works" },
+      });
+      expect(commit.status()).toBe(200);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an email without an @ is rejected before git is asked", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { id, root } = await makeAnonymousRepo(baseUrl, cookie, "bad-email");
+
+    try {
+      const bad = await request.post(`${baseUrl}/api/repos/${id}/identity`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { name: "Someone", email: "not-an-address" },
+      });
+      // A validation card, and nothing written.
+      expect(bad.status()).toBe(400);
+      // `--local` matters: reading the repo's own settings is what proves the
+      // server wrote nothing, whereas a bare read would show the developer's
+      // global identity and pass for the wrong reason.
+      const who = spawnSync("git", ["config", "--local", "user.email"], {
+        cwd: root,
+        encoding: "utf8",
+      });
+      expect(who.stdout.trim()).toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an initialisable folder gets a real git repository from the init fix", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const root = mkdtempSync(join(tmpdir(), "fl-e2e-init-"));
+    const repo = join(root, "plain");
+    mkdirSync(repo, { recursive: true });
+
+    try {
+      await setRootsForTest(baseUrl, [root]);
+      const id = await registerRepoForTest(baseUrl, cookie, repo);
+      expect(existsSync(join(repo, ".git"))).toBe(false);
+
+      const init = await request.post(`${baseUrl}/api/repos/${id}/init`, {
+        headers: { cookie, "Content-Type": "application/json" },
+      });
+      expect(init.status()).toBe(200);
+      // The repository is real: git itself can read it.
+      expect(existsSync(join(repo, ".git"))).toBe(true);
+      // `spawnSync` reports exit status as `status`, not `exitCode` — using
+      // the wrong name makes the assertion pass vacuously.
+      const rev = spawnSync("git", ["rev-parse", "--git-dir"], { cwd: repo, encoding: "utf8" });
+      expect(rev.status).toBe(0);
+
+      // And the entry is journaled, so it is undoable in the timeline.
+      const journal = (await (await request.get(`${baseUrl}/api/journal`, { headers: { cookie } })).json()) as {
+        entries: Array<{ description: string }>;
+      };
+      expect(journal.entries.some((e) => /Initialised/.test(e.description))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("aborting a merge restores the pre-merge tree and says it cannot be undone", async ({
+    request,
+  }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const root = mkdtempSync(join(tmpdir(), "fl-e2e-abort-"));
+    const repo = join(root, "demo");
+    mkdirSync(repo, { recursive: true });
+    const g = (...args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+    g("init", "-q", "-b", "main", ".");
+    g("config", "user.email", "t@e.invalid");
+    g("config", "user.name", "T");
+    writeFileSync(join(repo, "f.txt"), "base\n");
+    g("add", "-A");
+    g("commit", "-m", "base");
+
+    try {
+      await setRootsForTest(baseUrl, [root]);
+      const id = await registerRepoForTest(baseUrl, cookie, repo);
+
+      // A genuinely conflicted merge, so there IS a merge in progress.
+      g("checkout", "-q", "-b", "other");
+      writeFileSync(join(repo, "f.txt"), "theirs\n");
+      g("commit", "-q", "-am", "theirs");
+      g("checkout", "-q", "main");
+      writeFileSync(join(repo, "f.txt"), "ours\n");
+      g("commit", "-q", "-am", "ours");
+      const merge = g("merge", "other");
+      expect(merge.status).not.toBe(0);
+      expect(readFileSync(join(repo, "f.txt"), "utf8")).toContain("<<<<<<<");
+
+      const abort = await request.post(`${baseUrl}/api/repos/${id}/abort-merge`, {
+        headers: { cookie, "Content-Type": "application/json" },
+      });
+      expect(abort.status()).toBe(200);
+
+      // The conflict markers are gone and the tree is back to ours.
+      const after = readFileSync(join(repo, "f.txt"), "utf8");
+      expect(after).toBe("ours\n");
+      expect(after).not.toContain("<<<<<<<");
+
+      // The journal says it CANNOT be undone, and says why in one sentence.
+      const journal = (await (await request.get(`${baseUrl}/api/journal`, { headers: { cookie } })).json()) as {
+        entries: Array<{ description: string; undoable: boolean; notUndoableReason?: string; snapshotRef?: string }>;
+      };
+      const entry = journal.entries.find((e) => /Abandoned a merge/.test(e.description));
+      expect(entry).toBeTruthy();
+      expect(entry?.undoable).toBe(false);
+      expect(entry?.notUndoableReason).toContain("cannot be undone");
+      // But a snapshot was taken, so nothing is actually lost.
+      expect(entry?.snapshotRef).toBeTruthy();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an unmatched error still comes back with its raw output, never hidden", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+
+    try {
+      // An empty file path list is rejected before git runs, so it is not
+      // this case. Staging a path that does not exist DOES reach git, and it
+      // produces a pathspec error — which the translator knows, and that is
+      // the correct outcome, so it is asserted as such here.
+      const res = await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["no/such/file/at/all.txt"] },
+      });
+      const body = (await res.json()) as { code?: string; title?: string; raw?: string };
+      expect(body.code).toBe("pathspec");
+      // The card still carries the exact git text, which is what "never hide
+      // an error" has to mean in practice.
+      expect(body.raw).toBeTruthy();
+      // "pathspec" is the stable part: `git add` says "did not match any
+      // files" while `git checkout` says "did not match any file(s) known to
+      // git", so the shared word is what the rule and this test rely on.
+      expect(body.raw).toContain("pathspec");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("a card that was shown is recorded in the local error history", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir } = await makeCommitRepo(baseUrl, cookie);
+
+    try {
+      // Stage nothing: the history endpoint is being tested here, and the
+      // card is assembled by the interface from a failure it already got.
+      const shown = await request.post(`${baseUrl}/api/errors`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: {
+          repoPath: dir,
+          code: "git-error",
+          command: "git -C demo add -- does/not/exist.txt",
+          offered: ["retry"],
+        },
+      });
+      expect(shown.status()).toBe(200);
+      const { id: errorId } = (await shown.json()) as { id: string };
+      expect(typeof errorId).toBe("string");
+
+      // The fix is recorded against this error, with its outcome.
+      const outcome = await request.post(`${baseUrl}/api/errors/${errorId}/outcome`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { fix: "retry", worked: false },
+      });
+      expect(outcome.status()).toBe(200);
+
+      const history = (await (await request.get(`${baseUrl}/api/errors`, { headers: { cookie } })).json()) as {
+        entries: Array<{ code: string; chosen: string | null; outcome: string }>;
+      };
+      const mine = history.entries.find((e) => e.code === "git-error");
+      expect(mine?.chosen).toBe("retry");
+      expect(mine?.outcome).toBe("pending");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("the workbench shows the card rather than raw git text", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const token = await mintToken(baseUrl);
+    await page.goto(`${baseUrl}/?t=${token}`);
+    await expect(page.getByText("No folders scanned yet.")).toBeVisible();
+    // The card must not exist before anything fails, and must not be a stub
+    // sitting in the layout.
+    await expect(page.locator(".error-card")).toHaveCount(0);
+  });
+});

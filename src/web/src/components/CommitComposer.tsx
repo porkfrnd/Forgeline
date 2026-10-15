@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ChangeFile } from "../app/git.js";
 import { commit } from "../app/git.js";
+import type { ActionError } from "../app/git.js";
 
 /** The sanity-check card and commit form. Shows which staged files will be
  *  committed, a message textarea, and the Commit button. Only appears when
@@ -9,10 +10,12 @@ export function CommitComposer({
   repoId,
   stagedFiles,
   onCommitted,
+  onError,
 }: {
   repoId: string;
   stagedFiles: ChangeFile[];
   onCommitted: () => void;
+  onError?: (error: ActionError) => void;
 }) {
   const [message, setMessage] = useState("");
   const [committing, setCommitting] = useState(false);
@@ -25,7 +28,10 @@ export function CommitComposer({
     try {
       const res = await commit(repoId, message.trim());
       if (!res.ok) {
-        setError(`Commit failed: ${res.title}`);
+        // A missing identity or a held lock is what usually fails here, and
+        // both have real fixes — so the failure goes to the card that offers
+        // them, not a sentence that doesn't.
+        onError?.(res);
         return;
       }
       setMessage("");

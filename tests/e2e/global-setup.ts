@@ -17,6 +17,19 @@ export const SERVER_INFO_PATH = join(tmpdir(), "forgeline-e2e-server.json");
  *  home directory — nor survive to pollute the next run. */
 const E2E_DATA_DIR = mkdtempSync(join(tmpdir(), "forgeline-e2e-data-"));
 
+/** An EMPTY git config, pointed at by GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM.
+ *
+ *  Without this the server inherits the developer's real identity, and the
+ *  Milestone 5 "git doesn't know who you are" case cannot be produced at all —
+ *  the commit simply succeeds using their global user.name. With it, identity
+ *  comes only from each test repo's own settings, which is what a real user on
+ *  a fresh machine sees.
+ *
+ *  A file is used rather than the empty env var: git treats an empty
+ *  GIT_CONFIG_GLOBAL as "look at the default path", so unsetting is not enough. */
+const E2E_GIT_CONFIG = join(E2E_DATA_DIR, "..", "forgeline-e2e-git-config");
+writeFileSync(E2E_GIT_CONFIG, "");
+
 export default async function globalSetup(): Promise<void> {
   const child = spawn("node", ["dist/cli.js", "--no-open"], {
     cwd: process.cwd(),
@@ -24,6 +37,8 @@ export default async function globalSetup(): Promise<void> {
       ...process.env,
       FORGELINE_E2E: "1",
       FORGELINE_DATA_DIR: E2E_DATA_DIR,
+      GIT_CONFIG_GLOBAL: E2E_GIT_CONFIG,
+      GIT_CONFIG_SYSTEM: E2E_GIT_CONFIG,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

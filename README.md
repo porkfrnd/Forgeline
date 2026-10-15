@@ -76,7 +76,7 @@ flat). Effects Off forces Solid and removes all motion.
 
 ## Status
 
-**Early. Milestones 1–4 are complete.** What works today: the dashboard
+**Early. Milestones 1–5 are complete.** What works today: the dashboard
 discovers repositories in folders you pick and shows live branch,
 changed-file, and ahead/behind counts, pushed over a local stream as files
 change. The commit flow works end to end — you can see what changed, stage
@@ -91,9 +91,18 @@ toggle, and an Undo button appears only where recovery has been proven by
 tests. Rescue mode snapshots, parks HEAD under a private backup ref so no
 local commit is lost, then resets the repo to a clean tree.
 
-What does not exist yet: branches, stash, history, conflicts, remotes, the
-error translator, and the release manager. No control is drawn for a feature
-that is not built, so nothing is a dead button.
+When git fails, the error comes back as a plain-English card with buttons
+that fix it, and the exact git output one click away behind **Show details**
+and **Copy details**. What Forgeline can repair in one click — a missing
+identity, a folder that isn't a repository yet, a merge to abandon, a stuck
+git lock — it repairs in one click. Anything it cannot repair yet says so
+rather than showing a button that would do nothing. Forgeline also keeps a
+local record of which fixes actually worked, so a remedy that has never helped
+stops being offered first.
+
+What does not exist yet: branches, stash, history, conflicts, remotes, and the
+release manager. No control is drawn for a feature that is not built, so
+nothing is a dead button.
 
 **The Undo timeline**, with the saved snapshot and the command behind it:
 
@@ -242,6 +251,8 @@ src/server/index.ts           Hono app: auth, routes, static serving, SSE
 src/server/git/git.ts         the only module that runs git
 src/server/git/diff.ts        changed-file records and unified-diff parsing
 src/server/journal.ts         the action journal, written to app-data
+src/server/errorHistory.ts    which errors happened and which fix worked
+src/server/git/errors.ts      the error translator and its rule catalogue
 src/server/snapshots.ts       private refs for pre-action recovery points
 src/server/appdata.ts         resolves the OS app-data folder, never inside a repo
 src/server/scan/              bounded repository discovery

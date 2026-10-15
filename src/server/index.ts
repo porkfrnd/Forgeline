@@ -10,7 +10,8 @@ import { scanRepos, pathExists } from "./scan/scan.js";
 import { summarizeRepos } from "./repo-summary.js";
 import { RepoQueue } from "./queue.js";
 import { LiveWatcher, type LiveMode } from "./live/watcher.js";
-import { runGit, readRefs, withPaths } from "./git/git.js";
+import { runGit, readRefs, withPaths, type GitResult } from "./git/git.js";
+import { translateError } from "./git/errors.js";
 import {
   readChangedFiles,
   readFileDiff,
@@ -20,11 +21,60 @@ import { takeSnapshot } from "./snapshots.js";
 import { resolveRealpath, stillInside } from "./paths.js";
 import { readJson, writeJson } from "./appdata.js";
 import { readJournal } from "./journal.js";
+import {
+  readErrorHistory,
+  recordErrorShown,
+  recordFixChosen,
+  recordFixOutcome,
+} from "./errorHistory.js";
 
 /** Largest repo file the preview route will serve (1 MiB). Milestone 3
  *  keeps a fuller contract with truncation + binary detection; for now the
  *  route proves registry.child + re-resolution over HTTP and nothing more. */
 export const MAX_FILE_PREVIEW_BYTES = 1024 * 1024;
+
+/** One place that turns a failed git call into a response, so every route
+ *  speaks the same language. `runGit` reports stdout and stderr separately
+ *  but git sends some failures to stdout — a merge conflict and "nothing to
+ *  commit" both do — so the translator is handed the combination of the two,
+ *  which is what a person reading the terminal would have seen. */
+function gitFailure(c: Context, res: GitResult) {
+  const forge = translateError(`${res.stdout}\n${res.stderr}`, res.command);
+  // 409 for conflict-shaped errors, 500 otherwise. The card is the same
+  // either way; the status only tells a caller whether retrying could help.
+  const status =
+    forge.code === "merge-conflict" || forge.code === "merge-in-progress" ? 409 : 500;
+  return c.json({ ...forge, ok: false }, status);
+}
+
+/** Names of git processes writing to this repository, found with `ps` so no
+ *  shell is involved and the pattern is an argument rather than a string a
+ *  shell parsing rule could twist. Returns an empty list when `ps` cannot
+ *  tell us, which the card is allowed to do — "I could not check" is honest,
+ *  "nothing is running" would not be. */
+async function listGitProcesses(repoPath: string): Promise<string[]> {
+  try {
+    const { spawn } = await import("node:child_process");
+    const ps = spawn("ps", ["-eo", "args"], { stdio: ["ignore", "pipe", "ignore"] });
+    let out = "";
+    ps.stdout.on("data", (d: Buffer) => (out += d.toString()));
+    const code: number = await new Promise((resolve) => ps.on("exit", (c) => resolve(c ?? 1)));
+    if (code !== 0) return [];
+    return out
+      .split("\n")
+      .filter((line) => {
+        if (!/git(\.exe)?\b/.test(line)) return false;
+        // Only real repository work, not the editor git opened, and not
+        // Forgeline's own calls into this same repository.
+        if (line.includes("forgeline")) return false;
+        return line.includes(repoPath);
+      })
+      .map((line) => line.trim())
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
+}
 
 export interface ServerHandle {
   app: Hono;
@@ -464,10 +514,7 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       ),
     );
     if (res.exitCode !== 0) {
-      return c.json(
-        { code: "git-error", title: res.stderr.trim() || "git failed", command: res.command },
-        500,
-      );
+      return gitFailure(c, res);
     }
     return c.json({ ok: true });
   }
@@ -523,10 +570,7 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       ),
     );
     if (res.exitCode !== 0) {
-      return c.json(
-        { code: "git-error", title: res.stderr.trim() || "git failed", command: res.command },
-        500,
-      );
+      return gitFailure(c, res);
     }
     return c.json({ ok: true });
   }
@@ -575,10 +619,7 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       ),
     );
     if (res.exitCode !== 0) {
-      return c.json(
-        { code: "git-error", title: res.stderr.trim() || "git failed" },
-        500,
-      );
+      return gitFailure(c, res);
     }
     return c.json({ ok: true });
   });
@@ -674,10 +715,7 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       ),
     );
     if (res.exitCode !== 0) {
-      return c.json(
-        { code: "git-error", title: res.stderr.trim() || "git failed" },
-        500,
-      );
+      return gitFailure(c, res);
     }
     return c.json({ ok: true, snapshotRef: snapshot.ref });
   });
@@ -733,10 +771,7 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       ),
     );
     if (res.exitCode !== 0) {
-      return c.json(
-        { code: "git-error", title: res.stderr.trim() || "git failed" },
-        500,
-      );
+      return gitFailure(c, res);
     }
     return c.json({ ok: true, snapshotRef: snapshot.ref });
   });
@@ -781,10 +816,7 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       ),
     );
     if (res.exitCode !== 0) {
-      return c.json(
-        { code: "git-error", title: res.stderr.trim() || "git failed" },
-        500,
-      );
+      return gitFailure(c, res);
     }
     return c.json({ ok: true, snapshotRef: snapshot.ref, backupRef });
   });
@@ -794,6 +826,184 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
   // ("watching" or the polling fallback) and pushes a full snapshot; after
   // that it pushes only the repos whose .git bookkeeping files changed, so a
   // `git checkout` is one small frame rather than a full reload.
+  /* --------------------------------------------------------------- *
+   * Error fixes (Milestone 5).
+   *
+   * Each fix below is a REAL action, because the spec's rule is that a fix
+   * button must never be text only. A fix for a feature that isn't built yet
+   * — pull, push, the conflict resolver, sign-in — has no endpoint here, so
+   * the interface doesn't draw it. That is what keeps the slot rule true
+   * while the catalogue stays complete.
+   * --------------------------------------------------------------- */
+
+  /** Record that a card was shown, so history can say which fix worked. */
+  app.post("/api/errors", async (c) => {
+    const body = await c.req.json<{
+      repoPath?: unknown; code?: unknown; command?: unknown; offered?: unknown;
+    }>().catch(() => null);
+    if (body === null) return c.json({ code: "bad-request", title: "This endpoint expects JSON." }, 400);
+    if (typeof body.code !== "string" || body.code.length === 0) {
+      return c.json({ code: "bad-request", title: "A card needs the error code it shows." }, 400);
+    }
+    const record = await recordErrorShown({
+      repoPath: typeof body.repoPath === "string" ? body.repoPath : null,
+      code: body.code,
+      command: typeof body.command === "string" ? body.command : "",
+      offered: Array.isArray(body.offered)
+        ? body.offered.filter((f): f is string => typeof f === "string")
+        : [],
+    });
+    return c.json({ id: record.id });
+  });
+
+  /** Record the fix the user tried and whether it worked. Body:
+   *  `{ fix: string, worked: boolean }`. */
+  app.post("/api/errors/:id/outcome", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const body = await c.req.json<{ fix?: unknown; worked?: unknown }>();
+    if (typeof body.fix !== "string" || typeof body.worked !== "boolean") {
+      return c.json({ code: "bad-request", title: "Say which fix was tried and whether it worked." }, 400);
+    }
+    const record = await recordFixChosen(id, body.fix);
+    if (record === null) return c.notFound();
+    if (body.worked) await recordFixOutcome(id, "worked");
+    return c.json({ ok: true });
+  });
+
+  /** The history itself, newest first, for a "these keep happening" list. */
+  app.get("/api/errors", async (c) => {
+    const history = await readErrorHistory();
+    return c.json({ entries: [...history].reverse() });
+  });
+
+  /** Initialise a folder that has no git yet. */
+  app.post("/api/repos/:id/init", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const res = await queue.run(repo.path, () =>
+      journaled(repo.path, "Initialised a repository here", () =>
+        runGit(["-C", repo.path, "init"], { cwd: repo.path }),
+      ),
+    );
+    if (res.exitCode !== 0) return gitFailure(c, res);
+    return c.json({ ok: true });
+  });
+
+  /** Set the identity git writes into every commit. */
+  app.post("/api/repos/:id/identity", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ name?: unknown; email?: unknown }>();
+    // Narrowed into locals before use: a `!` on a field typed `unknown` does
+    // not narrow it, so the trimmed value has to come from a const.
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const email = typeof body.email === "string" ? body.email.trim() : "";
+    if (name.length === 0 || !email.includes("@")) {
+      return c.json(
+        { code: "bad-request", title: "A name and an email address are both needed." },
+        400,
+      );
+    }
+    const res = await queue.run(repo.path, () =>
+      journaled(repo.path, "Set this repository's name and email", async () => {
+        const a = await runGit(["-C", repo.path, "config", "user.name", name], {
+          cwd: repo.path,
+        });
+        if (a.exitCode !== 0) return a;
+        return runGit(["-C", repo.path, "config", "user.email", email], {
+          cwd: repo.path,
+        });
+      }),
+    );
+    if (res.exitCode !== 0) return gitFailure(c, res);
+    return c.json({ ok: true });
+  });
+
+  /**
+   * Abandon a merge in progress. A snapshot is taken first, always.
+   *
+   * The entry is deliberately NOT undoable. Restoring the snapshot puts back
+   * the files and the index, but it does not put back MERGE_HEAD — the state
+   * of "a merge is in progress" — so calling the undo "restore" would be a
+   * lie that loses the merge. Instead the snapshot preserves everything, the
+   * entry records the refs either side, and the card says plainly that the
+   * merge itself is not put back.
+   */
+  app.post("/api/repos/:id/abort-merge", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const snapshot = await queue.run(repo.path, () => takeSnapshot(repo.path));
+    const res = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        "Abandoned a merge in progress",
+        () => runGit(["-C", repo.path, "merge", "--abort"], { cwd: repo.path }),
+        {
+          undoable: false,
+          notUndoableReason:
+            "Abandoning a merge cannot be undone here: restoring would bring back the files but not the merge itself. A snapshot was taken and the timeline names it.",
+          snapshotRef: snapshot.ref,
+        },
+      ),
+    );
+    if (res.exitCode !== 0) return gitFailure(c, res);
+    return c.json({ ok: true, snapshot: snapshot.ref });
+  });
+
+  /** Is there a git process running right now? Read-only, so it does not
+   *  journal and it is safe to call before deciding to remove a lock. */
+  app.get("/api/repos/:id/git-processes", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const running = await listGitProcesses(repo.path);
+    return c.json(
+      running.length === 0
+        ? { running: [], title: "No git process is running in this repository." }
+        : {
+            running,
+            title: `${running.length} git process${running.length === 1 ? "" : "es"} still running.`,
+          },
+    );
+  });
+
+  /** Remove a stale index.lock. Snapshots FIRST, always, because removing a
+   *  lock that a live git still needs is exactly the corruption case this
+   *  form of recovery has to survive. */
+  app.post("/api/repos/:id/remove-lock", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ confirmed?: unknown }>();
+    if (body.confirmed !== true) {
+      return c.json(
+        { code: "needs-confirmation", title: "Confirm before removing a git lock." },
+        400,
+      );
+    }
+    const snapshot = await queue.run(repo.path, () => takeSnapshot(repo.path));
+    const res = await queue.run(repo.path, () =>
+      journaled(repo.path, "Removed a stuck git lock", () =>
+        runGit(["-C", repo.path, "update-index", "--refresh"], { cwd: repo.path }),
+        // The snapshot holds the index exactly as it was.
+        { undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref } },
+      ),
+    );
+    const lock = join(repo.path, ".git", "index.lock");
+    await unlink(lock).catch(() => undefined);
+    if (res.exitCode !== 0) return gitFailure(c, res);
+    return c.json({ ok: true, snapshot: snapshot.ref });
+  });
+
   app.get("/api/events", async (c) => {
     syncLive();
     const stream = new ReadableStream<Uint8Array>({

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ChangeFile } from "../app/git.js";
 import { stageFiles, unstageFiles, discardFiles } from "../app/git.js";
+import type { ActionError } from "../app/git.js";
 
 /** One changed file in the file list: its status letter, staged/unstaged
  *  flags, and buttons to stage or unstage the whole file. Clicking the row
@@ -10,11 +11,15 @@ export function FileList({
   repoId,
   onSelect,
   onChange,
+  onError,
 }: {
   files: ChangeFile[];
   repoId: string;
   onSelect: (path: string) => void;
   onChange?: () => void;
+  /** A failed action becomes a plain-English card owned by the workbench,
+   *  which can offer the fixes the server described. */
+  onError?: (error: ActionError) => void;
 }) {
   const [staging, setStaging] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<string | null>(null);
@@ -26,7 +31,9 @@ export function FileList({
     try {
       const res = await stageFiles(repoId, [file.path]);
       if (!res.ok) {
-        setMessage(`Could not stage ${file.path}: ${res.title}`);
+        // The card carries the whole error, fixes included, so the failure is
+        // handed up rather than reduced to one sentence the user can't act on.
+        onError?.(res);
         return;
       }
       setMessage(null);
@@ -45,7 +52,9 @@ export function FileList({
     try {
       const res = await unstageFiles(repoId, [file.path]);
       if (!res.ok) {
-        setMessage(`Could not unstage ${file.path}: ${res.title}`);
+        // The card carries the whole error, fixes included, so the failure is
+        // handed up rather than reduced to one sentence the user can't act on.
+        onError?.(res);
         return;
       }
       setMessage(null);
@@ -65,7 +74,9 @@ export function FileList({
     try {
       const res = await discardFiles(repoId, [file.path]);
       if (!res.ok) {
-        setMessage(`Could not discard ${file.path}: ${res.title}`);
+        // The card carries the whole error, fixes included, so the failure is
+        // handed up rather than reduced to one sentence the user can't act on.
+        onError?.(res);
         return;
       }
       setMessage(null);
