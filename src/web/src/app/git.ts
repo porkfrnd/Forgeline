@@ -61,6 +61,21 @@ async function actionJson(path: string, body: unknown): Promise<StageResult> {
   return { ok: true };
 }
 
+/**
+ * A GET to one of the read-only endpoints.
+ *
+ * Separate from `actionJson` because these are not actions: no snapshot, no
+ * journal, and — the reason this exists at all — sending them as a POST returns
+ * 404 from the router, which looks like "this repository doesn't exist" rather
+ * than "wrong verb".
+ */
+async function readJson(path: string): Promise<Record<string, unknown> | ActionError> {
+  const res = await fetch(path);
+  const parsed = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) return readError(res, parsed);
+  return parsed;
+}
+
 /** Stage whole files: `git add -- <paths>`. */
 export async function stageFiles(
   repoId: string,
@@ -644,4 +659,68 @@ export async function dropStash(repoId: string, ref: string): Promise<{ ok: true
   return actionJson(`/api/repos/${encodeURIComponent(repoId)}/stashes/drop`, { ref }) as Promise<
     { ok: true } | ActionError
   >;
+}
+
+/** A commit, as the log lists it. `date` is ISO 8601 because the interface
+ *  knows how to format one, and "3 days ago" is a number that changes between
+ *  being computed and being read. */
+export interface CommitInfo {
+  sha: string;
+  short: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  date: string;
+  /** Ref names pointing here, with `HEAD ->` decoration stripped. */
+  refs: string[];
+  parents: string[];
+  isMerge: boolean;
+  row: number;
+}
+
+export async function readHistory(
+  repoId: string,
+  from?: string,
+  limit = 200,
+): Promise<{ commits: CommitInfo[]; from: string | null }> {
+  const params = new URLSearchParams();
+  if (from !== undefined) params.set("from", from);
+  params.set("limit", String(limit));
+  const parsed = await readJson(`/api/repos/${encodeURIComponent(repoId)}/history?${params.toString()}`);
+  if (isActionError(parsed)) return { commits: [], from: null };
+  const commits = (parsed.commits ?? []) as CommitInfo[];
+  return { commits, from: (parsed.from ?? null) as string | null };
+}
+
+/** The commits that touched one file, including through a rename. */
+export async function readFileHistory(
+  repoId: string,
+  path: string,
+): Promise<{ commits: CommitInfo[]; path: string } | ActionError> {
+  const parsed = await readJson(
+    `/api/repos/${encodeURIComponent(repoId)}/history/file?path=${encodeURIComponent(path)}`,
+  );
+  if (isActionError(parsed)) return parsed;
+  return { commits: (parsed.commits ?? []) as CommitInfo[], path: String(parsed.path ?? path) };
+}
+
+/** One line of blame: the commit that changed it last. */
+export interface BlameLine {
+  line: number;
+  sha: string;
+  short: string;
+  authorName: string;
+  date: string;
+  subject: string;
+}
+
+export async function readBlame(
+  repoId: string,
+  path: string,
+): Promise<{ lines: BlameLine[]; path: string } | ActionError> {
+  const parsed = await readJson(
+    `/api/repos/${encodeURIComponent(repoId)}/blame?path=${encodeURIComponent(path)}`,
+  );
+  if (isActionError(parsed)) return parsed;
+  return { lines: (parsed.lines ?? []) as BlameLine[], path: String(parsed.path ?? path) };
 }

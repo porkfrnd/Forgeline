@@ -1947,3 +1947,147 @@ const stashStack = (dir: string): string[] =>
   spawnSync("git", ["stash", "list"], { cwd: dir, encoding: "utf8" }).stdout
     .split("\n")
     .filter((line) => line.length > 0);
+
+/**
+ * Milestone 7: history, the graph, and blame.
+ *
+ * The fixture has two branches with different commits, so a log that only shows
+ * the current branch is wrong — and that is exactly the kind of failure a single
+ * author on one branch cannot see.
+ */
+test.describe("Milestone 7 history and blame", () => {
+  async function makeHistoryRepo(baseUrl: string, cookie: string, name: string) {
+    const root = mkdtempSync(join(tmpdir(), `fl-e2e-hist-${name}-`));
+    const dir = join(root, "demo");
+    mkdirSync(dir, { recursive: true });
+    spawnSync("git", ["init", "-q", "-b", "main", "."], { cwd: dir });
+    spawnSync("git", ["config", "user.email", "ada@fixture.invalid"], { cwd: dir });
+    spawnSync("git", ["config", "user.name", "Ada Fixture"], { cwd: dir });
+    writeFileSync(join(dir, "a.txt"), "one\n");
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["commit", "-q", "-m", "first: set up the file"], { cwd: dir });
+    writeFileSync(join(dir, "a.txt"), "one\ntwo\n");
+    spawnSync("git", ["commit", "-q", "-am", "second: add a line"], { cwd: dir });
+    spawnSync("git", ["switch", "-q", "-c", "side"], { cwd: dir });
+    writeFileSync(join(dir, "b.txt"), "side\n");
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["commit", "-q", "-m", "side only: a file main has never seen"], { cwd: dir });
+    spawnSync("git", ["switch", "-q", "main"], { cwd: dir });
+    await setRootsForTest(baseUrl, [root]);
+    const id = await registerRepoForTest(baseUrl, cookie, dir);
+    return { root, dir, id };
+  }
+
+  const subjects = (dir: string): string[] =>
+    spawnSync("git", ["log", "--all", "--format=%s"], { cwd: dir, encoding: "utf8" }).stdout
+      .split("\n")
+      .filter((line) => line.length > 0);
+
+  test("the log shows every branch, not only the one that is checked out", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeHistoryRepo(baseUrl, cookie, "all");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-history").click();
+      const panel = page.locator(".history-panel");
+      await expect(panel).toBeVisible();
+
+      // Nothing is hidden. `main` is checked out, and the commit that only
+      // exists on `side` is still listed — a log that omits a branch is a log
+      // that claims a commit doesn't exist.
+      await expect(panel).toContainText("side only: a file main has never seen");
+      await expect(panel).toContainText("first: set up the file");
+      const shown = await panel.locator(".history-subject").count();
+      expect(shown).toBe(subjects(dir).length);
+      // Subject text, not a ref path.
+      await expect(panel).not.toContainText("refs/heads/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a branch that points at a commit shows that name on its row", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root } = await makeHistoryRepo(baseUrl, cookie, "refs");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-history").click();
+      const panel = page.locator(".history-panel");
+      // The ref decoration is stripped to names, and `HEAD ->` is not a name.
+      await expect(panel.locator(".history-refs").first()).toContainText("side");
+      await expect(panel.locator(".history-refs").first()).not.toContainText("HEAD");
+      // main's row shows main.
+      const mainRow = panel.locator(".history-row", { hasText: "second: add a line" });
+      await expect(mainRow.locator(".history-refs")).toContainText("main");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("opening a commit shows its full sha and its parents", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeHistoryRepo(baseUrl, cookie, "detail");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-history").click();
+      await page.locator(".history-line").first().click();
+      const detail = page.locator(".history-detail");
+      await expect(detail).toBeVisible();
+
+      // The sha git itself reports, not an abbreviation only the interface
+      // knows about.
+      const newest = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      await expect(detail).toContainText(newest);
+      await expect(detail).toContainText("Ada Fixture");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("blame names the commit behind each line, and they can differ", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeHistoryRepo(baseUrl, cookie, "blame");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-history").click();
+      await page.fill(".blame-form input", "a.txt");
+      await page.locator(".blame-form button[type=submit]").click();
+
+      const rows = page.locator(".blame-row");
+      await expect(rows).toHaveCount(2, { timeout: 10000 });
+      // One line per line, and the first line is from the earlier commit.
+      // `main` has two commits, so the first line — the one added by the
+      // earlier commit — is HEAD~1. Resolved from git, not from the interface's
+      // own idea of which commit a line belongs to.
+      const firstSha = spawnSync("git", ["rev-parse", "HEAD~1"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      await expect(rows.first()).toContainText(firstSha.slice(0, 9));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("blaming a file that doesn't exist says so rather than drawing nothing", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root } = await makeHistoryRepo(baseUrl, cookie, "missing");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-history").click();
+      await page.fill(".blame-form input", "not-a-file.txt");
+      await page.locator(".blame-form button[type=submit]").click();
+      // A card, because "there is nothing to blame here" is a real answer.
+      await expect(page.locator(".error-card")).toHaveCount(1, { timeout: 10000 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -16,6 +16,7 @@ import { RemoteBar } from "../components/RemoteBar";
 import SignInPrompt from "../components/SignInPrompt";
 import { BranchPanel } from "../components/BranchPanel";
 import { StashPanel } from "../components/StashPanel";
+import { HistoryPanel } from "../components/HistoryPanel";
 import { History } from "lucide-react";
 import {
   abortMerge,
@@ -61,6 +62,7 @@ export function App() {
   // that draws something other than the workbench, so it is state on its own.
   const [branchPanelOpen, setBranchPanelOpen] = useState(false);
   const [stashPanelOpen, setStashPanelOpen] = useState(false);
+  const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
   /** A one-line note shown by a panel that wants to confirm what it just did. */
   const [note, setNote] = useState<string | null>(null);
   /** How many stashes there are, for a number on the toolbar. Zero draws no
@@ -354,6 +356,17 @@ export function App() {
         <span className="spacer" />
         <button
           type="button"
+          className="button toolbar-history"
+          aria-expanded={historyPanelOpen}
+          onClick={() => setHistoryPanelOpen((v) => !v)}
+          disabled={selectedId === null}
+          title={selectedId === null ? "Open a repository to see its history" : "History"}
+        >
+          <History size={15} strokeWidth={1.5} aria-hidden="true" />
+          History
+        </button>
+        <button
+          type="button"
           className="button toolbar-stash"
           aria-expanded={stashPanelOpen}
           onClick={() => setStashPanelOpen((v) => !v)}
@@ -521,6 +534,10 @@ export function App() {
             onNote={setNote}
             onClose={() => setStashPanelOpen(false)}
           />
+        ) : null}
+
+        {historyPanelOpen && selectedId !== null ? (
+          <HistoryPanel repoId={selectedId} onError={reportError} onClose={() => setHistoryPanelOpen(false)} />
         ) : null}
 
         {branchPanelOpen && selectedId !== null ? (

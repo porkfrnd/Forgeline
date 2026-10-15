@@ -362,3 +362,19 @@ Fixing it exposed a second instance of the same class of mistake: the rule match
 - `CONFLICT (modify/delete): f.txt deleted in del and modified in HEAD.  Version HEAD of f.txt left in tree.` — did not. It produced `del and modified in HEAD.  Version HEAD of f.txt left in tree.` as a filename.
 
 The fix chooses the shape first and reads the name from the right end of it, which also had to strip a trailing period that belongs to git's sentence and not to the file. Both shapes are now tested against strings captured from real git, and a three-shapes-at-once case checks that names come out once each in order. A filename is the thing a user copies into a command, so a wrong one is worse than none.
+
+## M7.3 — history, blame, and two things a parser had to be talked into
+
+**Steps and results:**
+
+1. `src/server/git/history.ts` reads the log, one file's history, one commit, and one file's blame. It uses `git log --format` with the ASCII unit separator as a delimiter instead of the default human layout, because a subject containing a colon, a quote, or a newline is enough to shift a column in the default and nothing else in this module rests on it.
+2. `--all` is the default, not `HEAD`. A branch with no commits of its own is a fact worth showing; a log that omits a branch claims a commit doesn't exist, and the e2e fixture has two branches on purpose so that failure is visible.
+3. Blame uses `--porcelain`, which has a stable grammar, rather than the default format whose wrapping and quoting change with terminal width.
+4. 14 unit and 5 e2e tests.
+
+**Two bugs the tests found, both in the reading rather than the doing.**
+
+- The record parser looked for a line that was *exactly* the unit separator, which never happens: `--format` (not `--pretty`) prints one record per line *prefixed* by it. Every history read returned nothing, and the first test said `[]` rather than three commits.
+- The two e2e tests that failed on `refs/stash`-style details were the test's fault (`git switch -c` on a branch that already exists fails silently, and `git rev-parse HEAD~2` past the root commits prints the literal argument). Both are the kind of thing that only shows up when the assertion is answered by git instead of by the code under test.
+
+**A design decision worth recording.** `git blame` on a path git doesn't have exits 128 with `fatal: no such path 'x' in HEAD`, and the first version flattened that into an empty list — which tells the user "this file has no history". That is a different statement from "there is no such file", and the second is the true one. Blame now hands the failure through to the translator so the card says so, and there is a test in each layer asserting the two are not confused.

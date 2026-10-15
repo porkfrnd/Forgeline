@@ -27,6 +27,12 @@ import {
   pushRepo,
 } from "./git/remote.js";
 import {
+  blameFile,
+  fileHistory,
+  readCommit,
+  readHistory,
+} from "./git/history.js";
+import {
   applyStash,
   dropStash,
   listStashes,
@@ -1050,6 +1056,77 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
         ? null
         : "You are signed out of Forgeline. GitHub still lists this app under your authorised OAuth apps, where you can revoke it if you want to.",
     });
+  });
+
+  /* --------------------------------------------------------------- *
+   * History, blame, and the graph (Milestone 7).
+   *
+   * All three are read-only, so none of them journalled and none take a
+   * snapshot. `readHistory` covers every branch, because a branch with no
+   * commits of its own is a fact worth showing rather than hiding.
+   * --------------------------------------------------------------- */
+
+  app.get("/api/repos/:id/history", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const from = c.req.query("from");
+    const limitParam = Number(c.req.query("limit"));
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 500) : 200;
+    const commits = await readHistory(repo.path, from, limit);
+    return c.json({ commits, from: from ?? null });
+  });
+
+  /** The commits that touched one file, including through a rename. */
+  app.get("/api/repos/:id/history/file", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const path = c.req.query("path");
+    if (path === undefined || path.length === 0) {
+      return c.json({ code: "bad-request", title: "Which file?" }, 400);
+    }
+    const result = await fileHistory(repo.path, path);
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ commits: result.commits, path });
+  });
+
+  app.get("/api/repos/:id/history/:sha", async (c) => {
+    const id = c.req.param("id");
+    const sha = c.req.param("sha");
+    if (!id || sha === undefined) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const commit = await readCommit(repo.path, sha);
+    if (commit === null) return c.notFound();
+    return c.json({ commit });
+  });
+
+  /** Blame a file. The path is a query parameter rather than a URL segment
+   *  because a filename can contain a slash, which a single segment would eat. */
+  app.get("/api/repos/:id/blame", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const path = c.req.query("path");
+    if (path === undefined || path.length === 0) {
+      return c.json({ code: "bad-request", title: "Which file?" }, 400);
+    }
+    const blame = await blameFile(repo.path, path);
+    // git refuses a path it doesn't have, with exit 128. That answer is passed
+    // on rather than flattened into "this file has no history".
+    if (!blame.ok && blame.failure !== undefined) {
+      return gitFailure(c, {
+        stdout: blame.failure.output,
+        stderr: "",
+        exitCode: 128,
+        command: blame.failure.command,
+      });
+    }
+    return c.json({ lines: blame.lines, path });
   });
 
   /* --------------------------------------------------------------- *

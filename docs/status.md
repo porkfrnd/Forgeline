@@ -251,7 +251,7 @@ to `polling` while changes are still reported.
 Gaps 9 and 13 (app-data cache and persisted settings) both want the same
 storage module; they should land together rather than twice.
 
-### Milestone 7 — branches and stashes done
+### Milestone 7 — branches, stashes, history, and blame done
 
 Every branch operation is journalled and answers with the branch git is actually
 on afterwards, read back from `symbolic-ref` rather than remembered from the
@@ -268,6 +268,15 @@ working-tree snapshot so a restore can be undone. `git stash push` exits 0 on a
 clean tree, so the stack is counted before and after rather than trusting the
 status — without that, the user is told their work is stashed when it was
 already committed. 12 unit and 5 e2e tests.
+
+**History and blame.** `--all` is the default, because a branch with no commits
+of its own is a fact worth showing rather than hiding. `git log --format` is
+parsed with the ASCII unit separator as a delimiter, so a subject containing a
+colon or a newline cannot shift a column the way it would in git's default
+layout. Blame uses `--porcelain` for the same reason. 14 unit and 5 e2e tests;
+`git blame` on a path git doesn't have exits 128, and that is passed through to
+the translator as a real card rather than flattened into "this file has no
+history".
 
 Two translator rules were corrected while verifying this slice, both found by
 tests rather than by reading, and both recorded in docs/progress.md: a port
