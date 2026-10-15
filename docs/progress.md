@@ -142,3 +142,35 @@ One dated entry per loop run. Never rewrite old entries. Newest entries go at th
 
 **Commit:** `13e9856` — `feat(m2): live updates over SSE, per-repo queue, real README`
 **Push:** `git push origin main` succeeded (`e37abc7..13e9856 main -> main`); `git ls-remote origin main` returns `13e9856caafdd2819c4ecf9f9d9d7f2d170baf80`, matching local `main`.
+
+---
+
+## 2026-10-15 — Design foundation pass (D1–D4): families, contrast gate, Workbench shell
+
+**Slice:** Update 2 §3 and Update 3 §3 design foundation, before any new interface.
+
+**Context:** the app still looked like the spec's restrained original. Update 2 replaced that direction and Update 3 supplied the Workbench layout and the theme families. Every later screen depends on these tokens and components, so the pass runs first.
+
+**Plan (checklist):**
+- [x] D1 — `families.ts` as the single source of truth for colour; seven families × modes; `check-contrast.mjs` as a `verify` gate; `docs/design.md`.
+- [x] D2 — Workbench shell: sidebar, toolbar, work area, status bar.
+- [x] D3 — Core components in `tokens.css`: button, keycap, panel with ticks, row, readout, lamp, heatbar, watcher dot, toast/dialog/palette surfaces.
+- [x] D4 — Restyle the dashboard onto the shell; appearance controls for family, mode, surface, effects, density.
+
+**Steps and results:**
+1. Work — see checklist. Colours live in TypeScript, not CSS, so the contrast script reads the same file the app does and a family and its modes cannot drift. `ThemeProvider` turns a family + mode + surface into custom properties; Solid composites translucent surfaces over the base so they are genuinely opaque.
+2. Contrast gate — `npm run check:contrast` runs 297 text/graphic pairs and 264 lane checks. It failed on the first run with 12 real problems, all fixed: Mono's light lanes were light greys on a white panel (inverted); four families had heat ramps too narrow to encode anything; several lane sets had neighbours too close to tell apart, including a wrap-around from the last lane back to the first.
+3. Static check — `typecheck`, `lint`, `lint:copy` pass.
+4. Unit test — `vitest run`: 58 passed (unchanged; no server logic changed here beyond `health`).
+5. Browser test — `playwright test`: 40 passed across desktop and narrow, up from 38. Two new tests cover the appearance panel (family, mode, Effects Off, and a family lacking a mode disabling it) and the command palette.
+
+**Two bugs found and fixed:**
+- The narrow (800px) layout had `grid-template-rows` with four rows but only three grid areas, and hid the sidebar outright. A hidden repo rail means no way to switch repositories on a small screen, so the rail now becomes a horizontal strip instead of disappearing.
+- The new palette e2e test pressed Ctrl+K before React had mounted, so the shortcut listener was not attached yet. The test now waits for the shell first. The app was correct; the test raced it.
+
+**Slot rule applied:** Fetch, Pull, Push, Branch, Merge, and Stash are not drawn at all — not as disabled stubs. They appear when their features meet their exit criteria. The toolbar currently shows only the search field and appearance, both of which work.
+
+**Gaps closed:** the static "Choose folders" button (old gap 10) became a working Scan folder control posting to `POST /api/repos/scan`; `GET /api/health` now returns `gitVersion` and `liveMode` so the status bar shows real data.
+
+**Commit:** design foundation pass.
+**Push:** after each step, per Update 2 §2.

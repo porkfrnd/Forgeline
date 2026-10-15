@@ -16,6 +16,18 @@ pushes when its checks pass; each gate tags.
 | D2 | App shell: sidebar, toolbar, status bar, command bar | 1.5 h |
 | D3 | Core components: button, keycap, panel, row, readout, lamp, toast, dialog, palette | 2 h |
 | D4 | Restyle the existing dashboard onto the new shell | 1 h |
+
+**Done:** D1–D4, the design foundation pass. Colour is now one source of truth
+in `src/web/src/theme/families.ts`, verified by `npm run check:contrast`,
+which gates `verify`. Seven families × modes ship: Lagoon (default), Cathode,
+Paper, Mono, Dracula, Nord, and the hidden Phosphor. The Workbench shell,
+core components, and the restyled dashboard are in place, and `docs/design.md`
+documents the tokens, components, effects levels, and review checklist.
+Gaps closed along the way: the "Choose folders" gap became a working Scan
+folder control, and `GET /api/health` now reports `gitVersion` and `liveMode`
+for the status bar.
+
+Remaining slices for the two milestones:
 | M3.1 | Diff read, unstaged/staged file list, hunk fixture suite | 2 h |
 | M3.2 | Stage and unstage, including the hunk toggle | 1.5 h |
 | M3.3 | Diff viewer: inline, split, file | 1.5 h |

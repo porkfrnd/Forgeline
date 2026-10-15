@@ -24,10 +24,11 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
     "lint": "eslint .",
     "lint:copy": "node scripts/lint-copy.js",
+    "check:contrast": "node scripts/check-contrast.mjs",
     "test": "vitest run",
     "pretest:e2e": "npm run build",
     "test:e2e": "playwright test",
-    "verify": "npm run typecheck && npm run lint && npm run lint:copy && npm run test && npm run test:e2e"
+    "verify": "npm run check:contrast && npm run typecheck && npm run lint && npm run lint:copy && npm run test && npm run test:e2e"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",

@@ -10,6 +10,7 @@ import { scanRepos, pathExists } from "./scan/scan.js";
 import { summarizeRepos } from "./repo-summary.js";
 import { RepoQueue } from "./queue.js";
 import { LiveWatcher, type LiveMode } from "./live/watcher.js";
+import { runGit } from "./git/git.js";
 import { resolveRealpath, stillInside } from "./paths.js";
 
 /** Largest repo file the preview route will serve (1 MiB). Milestone 3
@@ -209,7 +210,21 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     await next();
   });
 
-  app.get("/api/health", (c) => c.json({ ok: true }));
+  // Git version, for the status bar. Cached for the life of the process: git
+  // does not change underneath a running app, and this is asked for on every
+  // dashboard load.
+  let gitVersion: string | null = null;
+  const readGitVersion = async (): Promise<string> => {
+    if (gitVersion !== null) return gitVersion;
+    const res = await runGit(["--version"], { cwd: process.cwd() });
+    const m = res.stdout.match(/git version (\S+)/);
+    gitVersion = m ? m[1] : "unknown";
+    return gitVersion;
+  };
+
+  app.get("/api/health", async (c) => {
+    return c.json({ ok: true, gitVersion: await readGitVersion(), liveMode: live.getMode() });
+  });
 
   // Test-only helper: mint a fresh single-use bootstrap token so each e2e
   // test can exchange its own. Always 404 unless the server was started

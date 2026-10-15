@@ -1,94 +1,464 @@
-:root,
-[data-theme="paper"] {
-  --color-bg: #ffffff;
-  --color-surface: #f6f8fa;
-  --color-text: #1f2328;
-  --color-muted: #59636e;
-  --color-border: #d1d9e0;
-  --color-accent: #0969da;
-  --color-ok: #1a7f37;
-  --color-warn: #9a6700;
-  --color-danger: #d1242c;
-  --color-info: #0969da;
-  --spacing-1: 4px;
-  --spacing-2: 8px;
-  --spacing-3: 12px;
-  --spacing-4: 16px;
-  --spacing-6: 24px;
-  --radius-sm: 4px;
-  --radius-md: 8px;
+/* Design tokens and base styles.
+ *
+ *  Colours are NOT defined here. They arrive as custom properties from
+ *  ThemeProvider, which reads src/web/src/theme/families.ts — the single
+ *  source of truth that scripts/check-contrast.mjs verifies. This file owns
+ *  structure only: layout, surfaces, effects levels, density, motion.
+ *
+ *  Rules that hold across every family and mode:
+ *    - 1px hairlines, never heavy borders.
+ *    - Every effect must encode information or help orientation. An effect
+ *      that does nothing is deleted.
+ *    - Effects Off removes all motion, glow, blur, and grain, and every
+ *      screen is still complete and legible. Solid surface is forced.
+ *    - Colour never carries meaning alone: heat and status always sit beside
+ *      a number, an icon, or a word.
+ */
+
+:root {
   --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-message: "Source Serif 4", Georgia, serif;
-  --focus-ring: 0 0 0 2px var(--color-accent);
-  --transition-fast: 150ms ease-out;
+
+  /* Structure */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --hairline-w: 1px;
+
+  /* Motion. Only transform, opacity, and colour are ever animated. */
+  --dur-fast: 120ms;
+  --dur-mid: 200ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* A visible focus ring in the accent, offset from the element. */
+  --focus-ring: 0 0 0 2px var(--base), 0 0 0 4px var(--accent);
+
+  /* Registration tick size, the technical-drawing detail on panels. */
+  --tick: 7px;
 }
 
-[data-theme="midnight"] {
-  --color-bg: #16181d;
-  --color-surface: #1f232a;
-  --color-text: #e6e8eb;
-  --color-muted: #9aa1ab;
-  --color-border: #33383f;
-  --color-accent: #539bf5;
-  --color-ok: #57ab5a;
-  --color-warn: #d29922;
-  --color-danger: #f47067;
-  --color-info: #539bf5;
+/* Density: row height and panel padding, through tokens only. */
+:root,
+[data-density="cozy"] {
+  --row-h: 36px;
+  --panel-pad: 12px;
+  --gap: 12px;
+}
+[data-density="compact"] {
+  --row-h: 28px;
+  --panel-pad: 8px;
+  --gap: 8px;
 }
 
 * { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
 body {
   margin: 0;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--base);
+  color: var(--text);
   font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
-.shell { display: flex; flex-direction: column; min-height: 100vh; }
-.header {
-  display: flex; align-items: center; gap: var(--spacing-3);
-  padding: var(--spacing-2) var(--spacing-4);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg);
+
+/* Glass surface puts a static ambient gradient behind the panels. It never
+ * animates, and it disappears entirely in Solid mode or Effects Off. */
+[data-surface="glass"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(120% 90% at 8% 0%, var(--ambient-from) 0%, transparent 60%),
+    radial-gradient(120% 100% at 100% 100%, var(--ambient-to) 0%, transparent 62%);
+  pointer-events: none;
 }
-.body { display: grid; grid-template-columns: 240px 1fr; flex: 1; min-height: 0; }
-.sidebar {
-  border-right: 1px solid var(--color-border);
-  padding: var(--spacing-3);
-  background: var(--color-surface);
+
+/* A faint dot grid in empty canvas areas, for structure. Static and cheap. */
+[data-effects="full"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image: radial-gradient(var(--hairline) 1px, transparent 1px);
+  background-size: 22px 22px;
+  opacity: 0.05;
+  pointer-events: none;
 }
-.main { padding: var(--spacing-4); min-width: 0; }
-.tabbar { display: flex; gap: var(--spacing-2); margin-bottom: var(--spacing-4); align-items: center; }
-.tab {
-  border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text);
-  border-radius: var(--radius-sm); padding: 6px 12px; cursor: pointer;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+
+/* ---------- surfaces ---------- */
+
+.panel {
+  background: var(--panel);
+  border: var(--hairline-w) solid var(--hairline);
+  border-radius: var(--radius-md);
+  padding: var(--panel-pad);
+  position: relative;
 }
-.tab.active { border-color: var(--color-accent); color: var(--color-accent); }
-.button {
-  border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text);
-  border-radius: var(--radius-sm); padding: 6px 12px; cursor: pointer; font-family: var(--font-ui);
-  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+
+/* Glass gets the blur; Solid and Effects Off do not. */
+[data-surface="glass"] [data-effects="full"] .panel,
+[data-surface="glass"] [data-effects="reduced"] .panel {
+  backdrop-filter: blur(var(--surface-blur));
 }
-.button.primary { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+
+/* Registration ticks: small corner marks like a technical drawing, drawn
+ *  with pseudo-elements so they cost no markup. */
+.panel[data-ticks]::before,
+.panel[data-ticks]::after {
+  content: "";
+  position: absolute;
+  width: var(--tick);
+  height: var(--tick);
+  border-color: var(--accent);
+  opacity: 0.5;
+  pointer-events: none;
+}
+.panel[data-ticks]::before {
+  top: -1px; left: -1px;
+  border-top: 2px solid;
+  border-left: 2px solid;
+  border-top-left-radius: var(--radius-md);
+}
+.panel[data-ticks]::after {
+  bottom: -1px; right: -1px;
+  border-bottom: 2px solid;
+  border-right: 2px solid;
+  border-bottom-right-radius: var(--radius-md);
+}
+
+/* ---------- layout: the workbench ---------- */
+
+.shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(200px, var(--rail-w, 248px)) 1fr;
+  grid-template-areas:
+    "sidebar toolbar"
+    "sidebar work"
+    "status  status";
+  height: 100vh;
+}
+
+.sidebar { grid-area: sidebar; border-right: var(--hairline-w) solid var(--hairline); overflow-y: auto; }
+.toolbar { grid-area: toolbar; border-bottom: var(--hairline-w) solid var(--hairline); }
+.work { grid-area: work; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+.statusbar { grid-area: status; border-top: var(--hairline-w) solid var(--hairline); }
+
+/* Below 960px the workbench becomes a single column. The repo rail does not
+ * disappear — it turns into a horizontal strip, because hiding it would leave
+ * no way to switch repositories on a small screen. */
+@media (max-width: 960px) {
+  .shell {
+    grid-template-rows: auto auto 1fr auto;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "sidebar"
+      "toolbar"
+      "work"
+      "status";
+  }
+  .sidebar {
+    border-right: none;
+    border-bottom: var(--hairline-w) solid var(--hairline);
+    overflow-x: auto;
+  }
+  .rail-list { display: flex; gap: var(--gap); flex-wrap: wrap; }
+  .rail-list > li { flex: 0 0 auto; }
+  .rail-row { border: var(--hairline-w) solid var(--hairline); border-radius: var(--radius-sm); }
+  .statusbar { flex-wrap: wrap; }
+}
+
+/* ---------- type ---------- */
+
+/* Everything technical is monospace: numerals, hashes, branch names, labels. */
+.mono {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.label {
+  font-family: var(--font-code);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Headline readouts: large tabular numerals. */
+.readout {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+/* Where the app speaks to you. */
+.message { font-family: var(--font-message); }
+.muted { color: var(--muted); }
 .spacer { flex: 1; }
-.panel { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--spacing-6); background: var(--color-bg); }
-.empty-title { font-family: var(--font-message); font-size: 18px; margin: 0 0 4px; }
-.empty-text { color: var(--color-muted); margin: 0 0 var(--spacing-3); }
-:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.count { font-family: var(--font-code); font-variant-numeric: tabular-nums; }
-.repo-list { list-style: none; margin: 0 0 var(--spacing-3); padding: 0; display: flex; flex-direction: column; gap: var(--spacing-2); }
-.repo-item { border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--spacing-2); background: var(--color-bg); }
-.repo-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
-.repo-status { display: block; color: var(--color-muted); font-family: var(--font-code); font-size: 12px; }
-.live-note { color: var(--color-warn); font-size: 12px; margin: var(--spacing-2) 0 0; }
-@media (max-width: 1024px) {
-  .body { grid-template-columns: 1fr; }
-  .sidebar { border-right: none; border-bottom: 1px solid var(--color-border); }
-  .tabbar { overflow-x: auto; }
+
+/* ---------- controls ---------- */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 10px;
+  background: var(--raised);
+  color: var(--text);
+  border: var(--hairline-w) solid var(--hairline);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
 }
+.button:hover:not(:disabled) { border-color: var(--accent); }
+.button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--base);
+  font-weight: 600;
+}
+/* Glow only while the button is enabled and ready, never when disabled. */
+[data-effects="full"] .button.primary:not(:disabled) {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 18px -6px var(--accent);
+}
+
+/* Keyboard hints everywhere, as keycaps. */
+.keycap {
+  font-family: var(--font-code);
+  font-size: 11px;
+  padding: 1px 5px;
+  border: var(--hairline-w) solid var(--hairline);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--base);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  min-height: var(--row-h);
+  padding: 0 var(--panel-pad);
+}
+.row:hover { background: var(--raised); }
+.row[aria-selected="true"] { background: var(--raised); }
+[data-effects="full"] .row[aria-selected="true"] {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* A status lamp: colour plus an icon plus a word, never colour alone. */
+.lamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-code);
+  font-size: 11px;
+}
+.lamp::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.lamp[data-state="clean"] { color: var(--status-clean); }
+.lamp[data-state="changed"] { color: var(--status-changed); }
+.lamp[data-state="conflict"] { color: var(--status-conflict); }
+.lamp[data-state="ahead"] { color: var(--status-ahead); }
+.lamp[data-state="behind"] { color: var(--status-behind); }
+
+/* The heat bar: a repo's health as a real ramp, not a single colour. */
+.heatbar {
+  width: 2px;
+  align-self: stretch;
+  background: var(--heat-3);
+  transition: background-color var(--dur-slow) var(--ease-out);
+}
+
+/* The live watcher dot. It pulses slowly, and only while watching. */
+.watcher-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--status-clean);
+}
+[data-effects="full"] .watcher-dot[data-live="true"] {
+  animation: pulse 2.4s var(--ease-out) infinite;
+}
+.watcher-dot[data-live="polling"] { background: var(--status-changed); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ---------- accessibility ---------- */
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- repo rail ---------- */
+
+.rail-section { padding: var(--panel-pad); }
+.rail-empty { font-family: var(--font-message); margin: 4px 0 0; }
+.rail-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.rail-row { width: 100%; text-align: left; background: none; border: 0; cursor: pointer; color: inherit; font: inherit; }
+.rail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-branch {
+  font-size: 11px;
+  color: var(--muted);
+  border: var(--hairline-w) solid var(--hairline);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-code);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--hot);
+}
+
+/* ---------- toolbar ---------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: var(--panel-pad);
+}
+.search-field { gap: var(--gap); }
+.input {
+  background: var(--raised);
+  border: var(--hairline-w) solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 13px;
+  min-width: 0;
+}
+.input::placeholder { color: var(--muted); }
+
+/* ---------- work area ---------- */
+
+.work { gap: var(--gap); padding: var(--panel-pad); overflow-y: auto; }
+.work-scan { flex: none; }
+.scan-row { display: flex; gap: var(--gap); align-items: center; }
+.scan-row .input { flex: 1; }
+.worktable { flex: 1; min-height: 0; }
+.empty-title { font-family: var(--font-message); font-size: 18px; margin: 0 0 4px; }
+
+/* ---------- status bar ---------- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: 4px var(--panel-pad);
+  font-size: 12px;
+}
+.status-item { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---------- command palette ---------- */
+
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 20;
+}
+.palette { width: min(620px, 92vw); background: var(--overlay); }
+[data-surface="glass"] .palette { backdrop-filter: blur(var(--surface-blur)); }
+.palette-input {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: var(--hairline-w) solid var(--hairline);
+  color: var(--text);
+  font-size: 15px;
+  padding: 8px 4px;
+}
+.palette-input:focus-visible { box-shadow: none; }
+.palette-results { max-height: 46vh; overflow-y: auto; padding-top: 6px; }
+.palette-group { margin-bottom: 8px; }
+.palette-item { width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.palette-empty { padding: 8px 4px; }
+.palette-hint { display: flex; gap: 8px; align-items: center; margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+
+/* ---------- appearance panel ---------- */
+
+.appearance {
+  position: fixed;
+  top: 56px;
+  right: var(--panel-pad);
+  z-index: 30;
+  width: 320px;
+  background: var(--overlay);
+}
+[data-surface="glass"] .appearance { backdrop-filter: blur(var(--surface-blur)); }
+.appearance .label { margin: var(--gap) 0 4px; }
+.appearance .label:first-child { margin-top: 0; }
+.control-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  background: var(--raised);
+}
+
+/* Effects Off: every effect goes, and nothing depends on it. */
+[data-effects="off"] * {
+  animation: none !important;
+  transition: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+[data-effects="off"] body::after { content: none; }
+[data-effects="off"] [data-surface="glass"] body::before { content: none; }
+/* Solid is forced, so panels are genuinely opaque. */
+[data-effects="off"] .panel { backdrop-filter: none; }
+
+/* Reduced: motion goes, structure stays. */
+[data-effects="reduced"] * {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  * { transition: none !important; }
+  * {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
 }

@@ -29,16 +29,54 @@ test.describe("Forgeline skeleton", () => {
     expect(session?.value).not.toBe(token);
   });
 
-  test("theme toggles between paper and midnight", async ({ page }) => {
+  test("appearance panel switches theme family and mode", async ({ page }) => {
     const { baseUrl } = serverInfo();
     const token = await mintToken(baseUrl);
     await page.goto(`${baseUrl}/?t=${token}`);
-    const toggle = page.getByRole("button", { name: /switch to .* theme/i });
-    await expect(toggle).toBeVisible();
-    await toggle.click();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "midnight");
-    await toggle.click();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "paper");
+
+    // Default is Lagoon, dark, glass.
+    const html = page.locator("html");
+    await expect(html).toHaveAttribute("data-family", "lagoon");
+    await expect(html).toHaveAttribute("data-mode", "dark");
+    await expect(html).toHaveAttribute("data-surface", "glass");
+
+    // Switch family: the panel offers every visible family, and only the
+    // palette changes — the layout must not.
+    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    const panel = page.getByRole("dialog", { name: "Appearance" });
+    await expect(panel).toBeVisible();
+    await panel.getByRole("button", { name: "Cathode" }).click();
+    await expect(html).toHaveAttribute("data-family", "cathode");
+
+    // Cathode supports light mode; switching it flips the resolved mode.
+    await panel.getByRole("button", { name: "Light", exact: true }).click();
+    await expect(html).toHaveAttribute("data-mode", "light");
+
+    // Effects Off forces Solid surfaces, and stays complete.
+    await panel.getByRole("button", { name: "Off", exact: true }).click();
+    await expect(html).toHaveAttribute("data-effects", "off");
+    await expect(page.getByRole("button", { name: "Appearance", exact: true })).toBeVisible();
+
+    // Nord has no light mode, so the light control is disabled there.
+    await panel.getByRole("button", { name: "Nord" }).click();
+    await expect(html).toHaveAttribute("data-family", "nord");
+    await expect(panel.getByRole("button", { name: "Light", exact: true })).toBeDisabled();
+  });
+
+  test("the command palette opens on Ctrl K and runs an action", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const token = await mintToken(baseUrl);
+    await page.goto(`${baseUrl}/?t=${token}`);
+    // The shortcut listener lives on the mounted app, so wait for the shell
+    // before pressing it rather than racing React.
+    await expect(page.getByRole("button", { name: "Appearance", exact: true })).toBeVisible();
+    await page.keyboard.press("Control+k");
+    const dialog = page.getByRole("dialog", { name: "Command palette" });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.type("Solid");
+    await dialog.getByRole("option").first().click();
+    await expect(page.locator("html")).toHaveAttribute("data-surface", "solid");
+    await expect(dialog).toBeHidden();
   });
 
   test("security headers are present and no CORS headers are sent", async () => {
@@ -75,7 +113,11 @@ test.describe("Forgeline skeleton", () => {
       headers: { cookie },
     });
     expect(res.status()).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    const body = (await res.json()) as { ok: unknown; gitVersion?: unknown };
+    expect(body.ok).toBe(true);
+    // The status bar shows the real git version, so it must be a real string.
+    expect(typeof body.gitVersion).toBe("string");
+    expect(body.gitVersion).not.toBe("");
   });
 
   test("requests with a bad Host header are rejected", async ({ request }) => {
@@ -306,9 +348,9 @@ test.describe("Forgeline skeleton", () => {
       const token = await mintToken(baseUrl);
       await page.goto(`${baseUrl}/?t=${token}`);
 
-      const row = page.locator(".repo-item", { hasText: "demo" });
+      const row = page.locator(".rail-row", { hasText: "demo" });
       await expect(row).toBeVisible();
-      await expect(row.locator(".repo-status")).toContainText("main");
+      await expect(row.locator(".rail-branch")).toHaveText("main");
 
       // Watch the stream from inside the page so we assert the push itself,
       // not just the eventual DOM. Passed as a string because this file is
@@ -328,8 +370,9 @@ test.describe("Forgeline skeleton", () => {
       expect(add.status).toBe(0);
 
       // Well inside the client's 15s fallback poll, so this can only have
-      // arrived as an SSE push.
-      await expect(row.locator(".repo-status")).toContainText("1 changed", { timeout: 10000 });
+      // arrived as an SSE push. The counter carries the count in its title
+      // and its accessible text, so the assertion is not colour-based.
+      await expect(row.locator('.counter[title="1 changed"]')).toBeVisible({ timeout: 10000 });
       const frames = (await page.evaluate("window.__reposFrames")) as unknown;
       expect(Array.isArray(frames)).toBe(true);
       expect((frames as string[]).length).toBeGreaterThan(0);
