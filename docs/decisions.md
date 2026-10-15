@@ -83,6 +83,67 @@ Each decision lists its date, the choice, the alternatives rejected, and the rea
 - **Alternatives rejected:** keeping `currentBranch` in the status path — three git processes per repository per refresh where two suffice.
 - **Reason:** `--branch` already returns the branch name. `currentBranch` stays exported for callers that want the branch without a status read.
 
+## Update 2 (2026-10-15)
+
+Recorded as instructed, summarizing sections 1, 2, 3, and 5 only. Section 4 of that update is not copied here or into any other file, and nothing in this repository states what it asks for.
+
+### Run plan (section 1)
+
+- **Choice:** finish two milestones completely, back to back, without waiting for the user between them. A milestone counts as finished only when every Update 1 section 3 exit criterion is met with evidence. The two milestones are the first two unfinished ones in the table, in order. The design foundation pass runs first, then milestone one slice by slice, then its gate, then milestone two slice by slice, then its gate.
+- **Alternatives rejected:** stopping after the first milestone to check in (rejected — the point of the run is two finished milestones); building new interface before the design pass (rejected — every later screen depends on the tokens and components).
+- **Reason:** the user asked for two complete milestones in one run. Design work never pushes a safety, security, or recovery criterion out of the run: if time runs short, visual polish is deferred and recorded, and the criterion is never deferred. A third milestone is not started even if budget remains; leftover budget goes to hardening.
+
+### Working method (section 2)
+
+- **Choice:** parallelize independent reads, commands, and test files; build fixture repositories once per run and reuse them; never re-read a file already in context; never rerun a passing check whose code has not changed; estimate each slice and split it if it runs past twice the estimate; keep documentation entries short and factual; read `git diff --staged` before every commit; spend a focused stranger's-read pass on each milestone's code after its gate and test the three riskiest places; treat `verify` taking over five minutes as a bug.
+- **Reason:** the run has a fixed budget and two gates to clear, so waste is the main risk. The commit and push cadence from Update 1 section 2 is unchanged.
+
+### Design direction (section 3)
+
+- **Choice:** an "instrument panel for a forge". The restrained, consistent, calm look from the spec is replaced by a bolder, technical, unmistakably designed one. Heat is the organising idea: recent or active runs hot, old or idle runs cold, and the commit graph is the centrepiece — white-hot at HEAD, cooling along the history behind it. Heat is always paired with a number, an icon, or text, so colour never carries meaning alone.
+- **Rules lifted:** the bans on gradients, glass, glow, neon, and purple-and-cyan palettes; the single-accent-colour rule; the calm dark grey Midnight theme; borders over shadows; the bans on entrance animation and looping decoration.
+- **Rules kept:** no stock art, no generated imagery, no floating mockups, no invented data, no banned phrases, no popups on launch, no telemetry, and all accessibility rules.
+- **The new test for every visual effect:** it must encode information or help orientation. A glow marks something active or focused; a gradient follows a real ramp such as age or activity; a texture gives structure. An effect that does nothing is deleted.
+- **Alternatives rejected:** the spec's restrained look (rejected — the user asked for something bolder, more technical, and more creative); a generic dashboard template (rejected explicitly).
+- **Reason:** the user asked for a bolder, more technical, more creative look. Surfaces become three layered levels with 1 px hairlines; panel corners carry registration ticks; a static grain and dot grid add structure at low opacity; typography keeps the three font roles with monospace for everything technical.
+
+### Documentation (section 5)
+
+- **Choice:** `docs/design.md` holds the tokens, components, effects levels, and the design review checklist, kept current. The design foundation pass order is fixed: tokens and themes, then the app shell, then the core components, then restyling the screens that already exist, committing and pushing after each step.
+- **Reason:** the design has to be written down before it is built, or six theme families drift apart within a slice.
+
+## Update 3 (2026-10-15)
+
+Supersedes the parts of Update 2 it names. Updates 1 and 2 stay in force otherwise.
+
+### What it replaces from Update 2
+
+- **The three-pane layout** (repo rail, worktable, inspector, command bar) is replaced by the **Workbench layout**: a resizable collapsible sidebar with sections, a toolbar, a horizontal Timeline strip, a worktable with file lists and a diff viewer, a pinned commit panel, and the status bar. See `docs/design.md`.
+- **The theme list** is replaced by families with modes. Update 2's Forge and Blueprint are gone: Forge is merged into Cathode, and Blueprint is no longer required. The families are Lagoon (the default), Cathode, Paper, Mono, Dracula, Nord, and the hidden Phosphor. Each has Dark and/or Light mode.
+- **Glass scope** is widened: Update 2 allowed blur only on overlays; glass is now permitted on every primary panel, subject to the performance budgets. Update 2's rule that every effect must encode information still applies.
+- **The commit graph** becomes the horizontal Timeline strip, with lane hue identifying the branch and brightness and glow showing recency, HEAD brightest.
+- **The heat idea survives** but becomes relative to the theme: the hot end of the ramp is the theme's accent, the cold end its muted tone.
+
+### What stays from Update 2
+
+The three font roles, the motion rules, the Effects setting (Full, Reduced, Off), the performance and accessibility rules, and the design review checklist all stand unchanged.
+
+### The slot rule
+
+- **Choice:** never show a control or region with no working feature behind it. A region appears when its feature meets its exit criteria, and until then the layout closes up around it. The toolbar shows only the buttons whose features exist.
+- **Reason:** this is how the integrity contract applies to the layout. A disabled stub button is a promise the app is not keeping, and the spec's "never lose the user's work" principle extends to not pretending.
+
+### Themes and modes (section 4)
+
+- **Choice:** two separate controls — family (palette and style) and mode (Dark, Light, Auto). A family that does not support a mode disables it in the control and says why. Each theme defines two accent tokens, one for fills and graphics and a darker one for text on light surfaces, so text always meets 4.5:1. Each theme defines eight lane colours that are easy to tell apart, each at 3:1 against its panel. The starting values in the update are suggestions; every pair is verified with a script and adjusted.
+- **Surfaces:** Glass (blur, translucent panels, ambient gradient) or Solid (opaque, flat). Effects Off forces Solid. Text contrast is measured against the worst case behind the panel — the lightest and darkest points of the ambient gradient — so a text surface needs 90% opaque fill or must pass at both extremes.
+- **Reason:** the reference the user supplied is a dark glassy client, and the update asks for that look without copying its branding. Separating family from mode keeps one layout with only tokens differing.
+
+### UI options (section 5)
+
+- **Choice:** family, mode, surface, effects, density, layout (sidebar or top tabs), toolbar (icons with labels or icons only), timeline visibility and height, repo list (cards or rows), panel options, text size, reduced motion, simple mode, and accent colour — all through tokens. The accent picker works with every family and adjusts the chosen colour's lightness so text meets 4.5:1 and graphics 3:1, telling the user when it adjusted something.
+- **Reason:** these are the spec's display options mapped onto the new layout, plus the new surface, toolbar, and timeline controls.
+
 ## LICENSE (open)
 
 - **Status:** unresolved. `package.json` currently declares `MIT` as a placeholder. The spec says to ask the user which license to use and not to choose silently. **Action needed from the user** before Milestone 9 / any publish.

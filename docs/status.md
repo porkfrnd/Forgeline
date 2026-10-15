@@ -1,7 +1,35 @@
 # Status
 
 > Last updated: 2026-10-15
-> Describes commit: 51cfa31 (docs: record 698a921 hash in handoff files) plus uncommitted Milestone 2 slice-1 work
+> Describes commit: 8e58b0b (Milestone 2 complete) plus uncommitted run-plan work
+
+## Run plan (Update 2, section 1)
+
+Two milestones, back to back, in order: **Milestone 3 (commit flow)** then
+**Milestone 4 (safety)**. The design foundation pass runs first, because every
+later screen depends on the tokens and components. Each slice commits and
+pushes when its checks pass; each gate tags.
+
+| # | Slice | Estimate |
+| --- | --- | --- |
+| D1 | Theme families x modes, lane colours, contrast script, `docs/design.md` | 1.5 h |
+| D2 | App shell: sidebar, toolbar, status bar, command bar | 1.5 h |
+| D3 | Core components: button, keycap, panel, row, readout, lamp, toast, dialog, palette | 2 h |
+| D4 | Restyle the existing dashboard onto the new shell | 1 h |
+| M3.1 | Diff read, unstaged/staged file list, hunk fixture suite | 2 h |
+| M3.2 | Stage and unstage, including the hunk toggle | 1.5 h |
+| M3.3 | Diff viewer: inline, split, file | 1.5 h |
+| M3.4 | Commit composer, commit action, sanity-check card | 2 h |
+| M3 | **Gate:** full verify, tag, push | 0.5 h |
+| M4.1 | Journal and app-data storage | 2 h |
+| M4.2 | Snapshots and the recovery kind per action | 2 h |
+| M4.3 | Undo timeline, rescue mode, confirmation previews | 2.5 h |
+| M4 | **Gate:** full verify, tag, push | 0.5 h |
+| — | Final screenshot review and final report | 1 h |
+
+Rules for the run: design work never pushes a safety, security, or recovery
+exit criterion out — visual polish is deferred instead, and recorded. No third
+milestone starts, even if budget remains; leftover budget goes to hardening.
 
 ## What Forgeline is
 
