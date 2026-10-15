@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,10 +12,19 @@ export interface ServerInfo {
 
 export const SERVER_INFO_PATH = join(tmpdir(), "forgeline-e2e-server.json");
 
+/** An isolated app-data directory for the e2e run. The server persists roots
+ *  and a journal to app-data, and neither may land in the developer's real
+ *  home directory — nor survive to pollute the next run. */
+const E2E_DATA_DIR = mkdtempSync(join(tmpdir(), "forgeline-e2e-data-"));
+
 export default async function globalSetup(): Promise<void> {
   const child = spawn("node", ["dist/cli.js", "--no-open"], {
     cwd: process.cwd(),
-    env: { ...process.env, FORGELINE_E2E: "1" },
+    env: {
+      ...process.env,
+      FORGELINE_E2E: "1",
+      FORGELINE_DATA_DIR: E2E_DATA_DIR,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
 

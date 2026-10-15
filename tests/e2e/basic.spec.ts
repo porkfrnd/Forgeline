@@ -666,3 +666,62 @@ test.describe("Milestone 3 commit flow", () => {
   });
 });
 
+test.describe("Milestone 4 journal", () => {
+  test("a commit is journaled with its command and refs, and never inside the repo", async ({
+    request,
+  }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      writeFileSync(join(dir, "new.txt"), "journaled\n");
+      await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["new.txt"] },
+      });
+      const committed = await request.post(`${baseUrl}/api/repos/${id}/commit`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { message: "Journal me" },
+      });
+      expect(committed.status()).toBe(200);
+
+      const res = await request.get(`${baseUrl}/api/journal`, { headers: { cookie } });
+      expect(res.status()).toBe(200);
+      const body = (await res.json()) as {
+        entries: Array<{
+          description: string;
+          command: string | null;
+          repoPath: string;
+          refs: { before: { head: string | null }; after: { head: string | null } };
+          undoable: boolean;
+        }>;
+      };
+      expect(body.entries.length).toBeGreaterThan(0);
+
+      // Newest first, so the commit is at the top of the timeline.
+      const top = body.entries[0];
+      expect(top?.description).toContain("Journal me");
+      expect(top?.command).toContain("commit");
+      expect(top?.repoPath).toBe(dir);
+      expect(top?.undoable).toBe(true);
+      // The commit moved HEAD, so the captured refs must differ.
+      expect(top?.refs.before.head).not.toBe(top?.refs.after.head);
+      expect(top?.refs.after.head).toMatch(/^[0-9a-f]{40}$/);
+
+      // The staging entry precedes the commit entry in the list.
+      const staging = body.entries.find((e) => e.description.includes("Staged"));
+      expect(staging).toBeTruthy();
+
+      // The journal lives in app-data, not in the repository: the repo must
+      // still be clean after the commit.
+      const status = spawnSync("git", ["status", "--porcelain"], {
+        cwd: dir,
+        encoding: "utf8",
+      });
+      expect(status.stdout.trim()).toBe("");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+});
+

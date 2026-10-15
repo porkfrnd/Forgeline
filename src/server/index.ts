@@ -15,7 +15,10 @@ import {
   readChangedFiles,
   readFileDiff,
 } from "./git/diff.js";
+import { journaled } from "./journal.js";
 import { resolveRealpath, stillInside } from "./paths.js";
+import { readJson, writeJson } from "./appdata.js";
+import { readJournal } from "./journal.js";
 
 /** Largest repo file the preview route will serve (1 MiB). Milestone 3
  *  keeps a fuller contract with truncation + binary detection; for now the
@@ -177,6 +180,13 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     live.setRepos(registry.list().map((entry) => entry.path));
   };
 
+  /** Persist the chosen scan roots to app-data, so a restart does not forget
+   *  where the user keeps their repositories. Best-effort: a read-only home
+   *  means the roots live in memory only for this session. */
+  const persistRoots = (): void => {
+    void writeJson("settings.json", { roots: registry.getRoots() });
+  };
+
   app.use("*", async (c, next) => {
     const port = getPort();
     const host = c.req.header("host") ?? "";
@@ -252,6 +262,7 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       return c.json({ code: "bad-request", title: "Missing paths." }, 400);
     }
     registry.setRoots(body.paths as string[]);
+    persistRoots();
     return c.json({ ok: true });
   });
 
@@ -323,6 +334,7 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     const roots = (body.roots as string[]).slice(0, 20);
     const found = await scanRepos(roots, { maxDepth });
     registry.setRoots([...registry.getRoots(), ...roots]);
+    persistRoots();
     const registered: { entry: RepoEntry; name?: string }[] = [];
     for (const repo of found) {
       const entry = await registry.register(repo.path);
@@ -436,8 +448,13 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     const paths = body.paths as string[];
     const before = staged ? ["add"] : ["restore", "--staged"];
     const args = withPaths(before, paths);
+    const verb = staged ? "Staged" : "Unstaged";
     const res = await queue.run(repo.path, () =>
-      runGit(["-C", repo.path, ...args], { cwd: repo.path }),
+      journaled(
+        repo.path,
+        `${verb} ${paths.length === 1 ? "1 file" : `${paths.length} files`}: ${paths.join(", ")}`,
+        () => runGit(["-C", repo.path, ...args], { cwd: repo.path }),
+      ),
     );
     if (res.exitCode !== 0) {
       return c.json(
@@ -485,10 +502,15 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     }
     const args = staged ? ["apply", "--cached"] : ["apply", "--reverse", "--cached"];
     const res = await queue.run(repo.path, () =>
-      runGit(["-C", repo.path, ...args, "-"], {
-        cwd: repo.path,
-        stdin: patch,
-      }),
+      journaled(
+        repo.path,
+        `${staged ? "Staged" : "Unstaged"} a hunk in ${path}`,
+        () =>
+          runGit(["-C", repo.path, ...args, "-"], {
+            cwd: repo.path,
+            stdin: patch,
+          }),
+      ),
     );
     if (res.exitCode !== 0) {
       return c.json(
@@ -526,9 +548,11 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       return c.json({ code: "bad-request", title: "Missing commit message." }, 400);
     }
     const res = await queue.run(repo.path, () =>
-      runGit(["-C", repo.path, "commit", "-m", message.trim()], {
-        cwd: repo.path,
-      }),
+      journaled(repo.path, `Committed: ${message.trim()}`, () =>
+        runGit(["-C", repo.path, "commit", "-m", message.trim()], {
+          cwd: repo.path,
+        }),
+      ),
     );
     if (res.exitCode !== 0) {
       return c.json(
@@ -537,6 +561,13 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       );
     }
     return c.json({ ok: true });
+  });
+
+  // The action journal, newest first, for the Undo timeline. Read-only here:
+  // entries are written by `journaled` around each mutating call, and undo
+  // itself is a new entry rather than an edit of an old one.
+  app.get("/api/journal", async (c) => {
+    return c.json({ entries: await readJournal() });
   });
 
   // Live updates over SSE. Authenticated like every other /api/* route, and
@@ -632,6 +663,15 @@ export async function startServer(opts: StartOptions): Promise<ServerHandle> {
   const token = auth.currentBootstrapToken();
   const registry = new RepoRegistry();
   registry.setRoots(opts.roots ?? []);
+  // A restart forgets nothing the user told us: the roots we scanned last
+  // time are read back from app-data before the first request is served.
+  if (opts.roots === undefined) {
+    const settings = await readJson<{ roots?: unknown }>("settings.json");
+    if (settings && Array.isArray(settings.roots)) {
+      const saved = settings.roots.filter((r): r is string => typeof r === "string");
+      if (saved.length > 0) registry.setRoots(saved);
+    }
+  }
   let actualPort = opts.port;
   const handles: ServerHandles = { queue: new RepoQueue(), live: new LiveWatcher(() => {}) };
   const app = createApp(() => actualPort, { auth, registry, handles });

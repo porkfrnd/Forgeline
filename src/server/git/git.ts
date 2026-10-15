@@ -231,3 +231,33 @@ export async function repoStatusFields(repoPath: string): Promise<RepoStatusFiel
 function gitInDirArgs(dir: string): string[] {
   return ["-C", dir];
 }
+
+/** HEAD, branch, and whether a stash exists, for a journal entry. Never
+ *  throws: an empty repo has no HEAD and reports `null` rather than an
+ *  error, because "there is nothing here yet" is a real state a journal
+ *  entry has to be able to describe. */
+export async function readRefs(repoPath: string): Promise<{
+  head: string | null;
+  branch: string | null;
+  hasStash: boolean;
+}> {
+  const head = await runGit([...gitInDirArgs(repoPath), "rev-parse", "HEAD"], {
+    cwd: repoPath,
+    env: OPTIONAL_LOCKS_ENV,
+  });
+  const branch = await runGit(
+    [...gitInDirArgs(repoPath), "rev-parse", "--abbrev-ref", "HEAD"],
+    { cwd: repoPath, env: OPTIONAL_LOCKS_ENV },
+  );
+  const stash = await runGit([...gitInDirArgs(repoPath), "rev-parse", "--verify", "--quiet", "refs/stash"], {
+    cwd: repoPath,
+    env: OPTIONAL_LOCKS_ENV,
+  });
+  const headSha = head.stdout.trim();
+  const branchName = branch.stdout.trim();
+  return {
+    head: head.exitCode === 0 && headSha.length > 0 ? headSha : null,
+    branch: branchName.length > 0 ? (branchName === "HEAD" ? "HEAD" : branchName) : null,
+    hasStash: stash.exitCode === 0,
+  };
+}
