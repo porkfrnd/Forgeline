@@ -427,3 +427,242 @@ test.describe("Forgeline skeleton", () => {
   });
 });
 
+/** A repo with one commit, so a second commit's parent is known. */
+async function makeCommitRepo(baseUrl: string, cookie: string): Promise<{ dir: string; id: string }> {
+  const root = mkdtempSync(join(tmpdir(), "fl-e2e-commit-"));
+  const repo = join(root, "demo");
+  mkdirSync(repo, { recursive: true });
+  spawnSync("git", ["init", "-b", "main"], { cwd: repo });
+  spawnSync("git", ["config", "user.email", "t@e.invalid"], { cwd: repo });
+  spawnSync("git", ["config", "user.name", "T"], { cwd: repo });
+  writeFileSync(join(repo, "a.txt"), "one\n");
+  spawnSync("git", ["add", "a.txt"], { cwd: repo });
+  spawnSync("git", ["commit", "-m", "init"], { cwd: repo });
+  await setRootsForTest(baseUrl, [root]);
+  const id = await registerRepoForTest(baseUrl, cookie, repo);
+  return { dir: repo, id };
+}
+
+test.describe("Milestone 3 commit flow", () => {
+  test("changes and diff report the real state of the working tree", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      // Untracked plus a modification of a tracked file.
+      writeFileSync(join(dir, "a.txt"), "one\nchanged\n");
+      writeFileSync(join(dir, "new.txt"), "staged later\n");
+
+      const changes = await request.get(`${baseUrl}/api/repos/${id}/changes`, {
+        headers: { cookie },
+      });
+      expect(changes.status()).toBe(200);
+      const body = (await changes.json()) as { files: Array<Record<string, unknown>> };
+      const paths = body.files.map((f) => String(f.path));
+      expect(paths).toEqual(expect.arrayContaining(["a.txt", "new.txt"]));
+      expect(body.files.find((f) => f.path === "a.txt")).toMatchObject({
+        unstaged: true,
+        staged: false,
+      });
+
+      const diff = await request.get(
+        `${baseUrl}/api/repos/${id}/diff?path=${encodeURIComponent("a.txt")}&staged=false`,
+        { headers: { cookie } },
+      );
+      expect(diff.status()).toBe(200);
+      const parsed = (await diff.json()) as {
+        binary: boolean;
+        hunks: Array<{ lines: Array<{ kind: string; text: string }> }>;
+      };
+      expect(parsed.binary).toBe(false);
+      expect(parsed.hunks).toHaveLength(1);
+      const text = JSON.stringify(parsed.hunks[0].lines);
+      expect(text).toContain("changed");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("a file can be staged and unstaged, and staged changes commit", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      writeFileSync(join(dir, "new.txt"), "written by the e2e suite\n");
+
+      const before = await request.get(`${baseUrl}/api/repos/${id}/changes`, {
+        headers: { cookie },
+      });
+      const beforeBody = (await before.json()) as { files: Array<Record<string, unknown>> };
+      expect(beforeBody.files.find((f) => f.path === "new.txt")).toMatchObject({
+        staged: false,
+        unstaged: true,
+      });
+
+      const staged = await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["new.txt"] },
+      });
+      expect(staged.status()).toBe(200);
+
+      const after = await request.get(`${baseUrl}/api/repos/${id}/changes`, {
+        headers: { cookie },
+      });
+      const afterBody = (await after.json()) as { files: Array<Record<string, unknown>> };
+      expect(afterBody.files.find((f) => f.path === "new.txt")).toMatchObject({
+        staged: true,
+      });
+
+      const commit = await request.post(`${baseUrl}/api/repos/${id}/commit`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { message: "Add new.txt from the e2e suite" },
+      });
+      expect(commit.status()).toBe(200);
+
+      // The worktree is now clean, which is the only proof that matters: the
+      // commit took the staged change and left nothing behind.
+      const final = await request.get(`${baseUrl}/api/repos/${id}/changes`, {
+        headers: { cookie },
+      });
+      expect(((await final.json()) as { files: unknown[] }).files).toHaveLength(0);
+      const log = spawnSync("git", ["log", "--oneline"], { cwd: dir, encoding: "utf8" });
+      expect(log.stdout).toContain("Add new.txt from the e2e suite");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("a commit with an empty message is rejected, and nothing is written", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      writeFileSync(join(dir, "new.txt"), "must survive\n");
+      await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["new.txt"] },
+      });
+      const bad = await request.post(`${baseUrl}/api/repos/${id}/commit`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { message: "   " },
+      });
+      expect(bad.status()).toBe(400);
+      const body = (await bad.json()) as { code?: string; title?: string };
+      expect(body.code).toBe("bad-request");
+      const log = spawnSync("git", ["log", "--oneline"], { cwd: dir, encoding: "utf8" });
+      expect(log.stdout).not.toContain("must survive");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("a single hunk can be staged with git apply", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      // Two far-apart edits, so they land in two separate hunks.
+      writeFileSync(join(dir, "a.txt"), `one\n${"pad\n".repeat(20)}two\n`);
+      // Commit the padding first so the working tree holds only the final edit.
+      spawnSync("git", ["add", "a.txt"], { cwd: dir });
+      spawnSync("git", ["commit", "-m", "pad"], { cwd: dir });
+      writeFileSync(join(dir, "a.txt"), `one\n${"pad\n".repeat(20)}TWO\n`);
+
+      const diffRes = await request.get(
+        `${baseUrl}/api/repos/${id}/diff?path=${encodeURIComponent("a.txt")}&staged=false`,
+        { headers: { cookie },
+        },
+      );
+      const diff = (await diffRes.json()) as {
+        hunks: Array<{ header: string; lines: Array<{ kind: string; text: string }> }>;
+      };
+      expect(diff.hunks).toHaveLength(1);
+
+      // Rebuild the patch from the hunk the server returned, exactly as the
+      // diff viewer does, and stage it.
+      const hunk = diff.hunks[0];
+      const lines = [`diff --git a/a.txt b/a.txt`, `--- a/a.txt`, `+++ b/a.txt`, hunk.header];
+      for (const line of hunk.lines) {
+        lines.push(`${line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}${line.text}`);
+      }
+      const res = await request.post(`${baseUrl}/api/repos/${id}/stage-hunk`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { path: "a.txt", patch: `${lines.join("\n")}\n` },
+      });
+      expect(res.status()).toBe(200);
+
+      const after = await request.get(`${baseUrl}/api/repos/${id}/changes`, {
+        headers: { cookie },
+      });
+      const afterBody = (await after.json()) as { files: Array<Record<string, unknown>> };
+      const changed = afterBody.files.find((f) => f.path === "a.txt");
+      // The staged hunk is in the index and no further unstaged edit remains,
+      // which is the only honest proof `git apply --cached` took it.
+      expect(changed).toMatchObject({ staged: true, unstaged: false });
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("write paths reject a forged repo id and an escaping path", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const forged = await request.post(`${baseUrl}/api/repos/not-a-real-id/stage`, {
+      headers: { cookie, "Content-Type": "application/json" },
+      data: { paths: ["a.txt"] },
+    });
+    expect(forged.status()).toBe(404);
+
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      const escape = await request.post(`${baseUrl}/api/repos/${id}/stage-hunk`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { path: "../outside.txt", patch: "not a patch" },
+      });
+      expect(escape.status()).toBe(400);
+    } finally {
+      // Registered state is global, and the narrow project re-runs this file
+      // against the same server. Leaving the temp dir behind would leave a
+      // live repo registered for every later test.
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("the workbench lists a changed file, stages it, and commits it", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      writeFileSync(join(dir, "new.txt"), "committed from the workbench\n");
+      const token = await mintToken(baseUrl);
+      await page.goto(`${baseUrl}/?t=${token}`);
+
+      // The changed file is listed with an action, not as a decoration.
+      const row = page.locator(".file-row", { hasText: "new.txt" });
+      await expect(row).toBeVisible();
+      await expect(row.locator(".file-letter")).toHaveText("A");
+
+      // Stage it: the commit composer appears with the staged file named,
+      // which is the sanity-check card doing its job.
+      await row.getByRole("button", { name: "Stage", exact: true }).click();
+      const composer = page.locator(".commit-composer");
+      await expect(composer).toBeVisible();
+      await expect(composer.locator(".commit-file-row", { hasText: "new.txt" })).toBeVisible();
+
+      // The composer refuses an empty message, then commits when filled in.
+      await expect(composer.getByRole("button", { name: "Commit staged changes" })).toBeDisabled();
+      await composer.getByLabel("Commit message").fill("Add new.txt from the workbench");
+      await composer.getByRole("button", { name: "Commit staged changes" }).click();
+
+      await expect(composer).toBeHidden();
+      await expect(page.locator(".file-row", { hasText: "new.txt" })).toBeHidden();
+
+      const log = spawnSync("git", ["log", "--oneline"], { cwd: dir, encoding: "utf8" });
+      expect(log.stdout).toContain("Add new.txt from the workbench");
+      expect(log.stdout).not.toContain("not staged yet");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+});
+

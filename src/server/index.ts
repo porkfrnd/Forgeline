@@ -507,6 +507,38 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     return stageUnstageHunk(c, false);
   });
 
+  // Commit the staged changes. Body: `{ message: string }`. Runs `git commit
+  // -m <message>`; the author is whatever git is configured to use for the
+  // repo (user.name/user.email), falling back to the system default. The
+  // sanity-check card on the client shows what will be committed before this
+  // is called.
+  app.post("/api/repos/:id/commit", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ message?: unknown }>();
+    const message = body.message;
+    if (typeof message !== "string") {
+      return c.json({ code: "bad-request", title: "Missing commit message." }, 400);
+    }
+    if (message.trim().length === 0) {
+      return c.json({ code: "bad-request", title: "Missing commit message." }, 400);
+    }
+    const res = await queue.run(repo.path, () =>
+      runGit(["-C", repo.path, "commit", "-m", message.trim()], {
+        cwd: repo.path,
+      }),
+    );
+    if (res.exitCode !== 0) {
+      return c.json(
+        { code: "git-error", title: res.stderr.trim() || "git failed" },
+        500,
+      );
+    }
+    return c.json({ ok: true });
+  });
+
   // Live updates over SSE. Authenticated like every other /api/* route, and
   // the only route that stays open. On connect it states the live mode
   // ("watching" or the polling fallback) and pushes a full snapshot; after

@@ -67,6 +67,16 @@ export async function unstageHunk(
   });
 }
 
+/** Commit the staged changes: `git commit -m <message>`. */
+export async function commit(
+  repoId: string,
+  message: string,
+): Promise<StageResult> {
+  return stageJson(`/api/repos/${encodeURIComponent(repoId)}/commit`, {
+    message,
+  });
+}
+
 /** Changed-file records for a repo, staged and unstaged together. */
 export interface ChangeFile {
   path: string;

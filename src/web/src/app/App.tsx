@@ -9,6 +9,7 @@ import { CommandPalette, type PaletteAction } from "../components/CommandPalette
 import { AppearancePanel } from "../components/AppearancePanel";
 import { FileList } from "../components/FileList";
 import { DiffViewer } from "../components/DiffViewer";
+import { CommitComposer } from "../components/CommitComposer";
 
 /**
  * The Workbench shell.
@@ -50,15 +51,19 @@ export function App() {
     setSelectedFile(null);
     setFiles([]);
     if (selectedId === null) return;
-    (async () => {
-      try {
-        const fetched = await fetchChanges(selectedId);
-        setFiles(fetched);
-      } catch {
-        setFiles([]);
-      }
-    })();
+    void fetchChanges(selectedId).then(setFiles, () => setFiles([]));
   }, [selectedId]);
+
+  const refreshChanges = async (): Promise<void> => {
+    if (selectedId === null) return;
+    try {
+      setFiles(await fetchChanges(selectedId));
+    } catch {
+      setFiles([]);
+    }
+  };
+
+  const stagedFiles = files.filter((f) => f.staged);
 
   // The browser cannot hand the server an arbitrary filesystem path, so a
   // root is typed. Forgeline only ever scans what it is given.
@@ -205,12 +210,24 @@ export function App() {
               </p>
             </>
           ) : selectedFile === null ? (
-            <FileList files={files} repoId={selectedId} onSelect={setSelectedFile} />
+            <FileList
+              files={files}
+              repoId={selectedId!}
+              onSelect={setSelectedFile}
+              onChange={refreshChanges}
+            />
           ) : (
             <DiffViewer
-              repoId={selectedId}
+              repoId={selectedId!}
               path={selectedFile!}
               onBack={() => setSelectedFile(null)}
+            />
+          )}
+          {stagedFiles.length > 0 && (
+            <CommitComposer
+              repoId={selectedId!}
+              stagedFiles={stagedFiles}
+              onCommitted={refreshChanges}
             />
           )}
         </section>

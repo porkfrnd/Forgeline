@@ -9,10 +9,12 @@ export function FileList({
   files,
   repoId,
   onSelect,
+  onChange,
 }: {
   files: ChangeFile[];
   repoId: string;
   onSelect: (path: string) => void;
+  onChange?: () => void;
 }) {
   const [staging, setStaging] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<string | null>(null);
@@ -26,6 +28,7 @@ export function FileList({
         return;
       }
       setMessage(null);
+      void onChange?.();
     } finally {
       setStaging((s) => {
         const n = new Set(s);
@@ -44,6 +47,7 @@ export function FileList({
         return;
       }
       setMessage(null);
+      void onChange?.();
     } finally {
       setStaging((s) => {
         const n = new Set(s);
