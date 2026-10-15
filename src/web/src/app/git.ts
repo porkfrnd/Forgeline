@@ -724,3 +724,77 @@ export async function readBlame(
   if (isActionError(parsed)) return parsed;
   return { lines: (parsed.lines ?? []) as BlameLine[], path: String(parsed.path ?? path) };
 }
+
+/** One conflicted path and which kind of conflict git recorded. */
+export interface ConflictEntry {
+  path: string;
+  kind: "both-modified" | "delete-modify" | "rename-rename" | "other";
+  stages: { ours: string | null; theirs: string | null; base: string | null };
+  hasMarkers: boolean;
+}
+
+export interface ConflictIndex {
+  entries: ConflictEntry[];
+  /** The stopped operation, or null when nothing is in progress. */
+  operation: string | null;
+}
+
+export async function readConflicts(repoId: string): Promise<ConflictIndex> {
+  const res = await fetch(`/api/repos/${encodeURIComponent(repoId)}/conflicts`);
+  const parsed = (await res.json().catch(() => ({}))) as { entries?: ConflictEntry[]; operation?: string | null };
+  return { entries: parsed.entries ?? [], operation: parsed.operation ?? null };
+}
+
+/** One side of a conflicted file, as text. */
+export async function readConflictSide(
+  repoId: string,
+  path: string,
+  side: "ours" | "theirs" | "base",
+): Promise<{ ok: true; text: string } | ActionError> {
+  const parsed = await readJson(
+    `/api/repos/${encodeURIComponent(repoId)}/conflicts/side?path=${encodeURIComponent(path)}&side=${side}`,
+  );
+  if (isActionError(parsed)) return parsed;
+  return { ok: true, text: String(parsed.text ?? "") };
+}
+
+export async function resolveConflict(
+  repoId: string,
+  path: string,
+  choice: "ours" | "theirs",
+): Promise<{ ok: true } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/conflicts/resolve`, { path, choice }) as Promise<
+    { ok: true } | ActionError
+  >;
+}
+
+/** Keep both versions, markers and all, for a hand edit. This deliberately does
+ *  not stage the result — staging is what would make git's conflict go away. */
+export async function keepBoth(repoId: string, path: string): Promise<{ ok: true } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/conflicts/keep-both`, { path }) as Promise<
+    { ok: true } | ActionError
+  >;
+}
+
+/** Write a hand-edited resolution in full. */
+export async function writeResolvedFile(
+  repoId: string,
+  path: string,
+  content: string,
+): Promise<{ ok: true } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/conflicts/write`, { path, content }) as Promise<
+    { ok: true } | ActionError
+  >;
+}
+
+export async function continueMerge(repoId: string, operation: string): Promise<{ ok: true } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/conflicts/continue`, { operation }) as Promise<
+    { ok: true } | ActionError
+  >;
+}
+
+export async function abortOperation(repoId: string, operation: string): Promise<{ ok: true } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/conflicts/abort`, { operation }) as Promise<
+    { ok: true } | ActionError
+  >;
+}

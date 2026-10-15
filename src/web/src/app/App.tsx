@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { GitBranch, Inbox } from "lucide-react";
 import { useTheme } from "../theme/ThemeProvider";
 import { useRepos } from "./useRepos";
-import { fetchChanges, listStashes, type ChangeFile } from "./git.js";
+import { fetchChanges, listStashes, readConflicts, type ChangeFile } from "./git.js";
 import { RepoRail } from "../components/RepoRail";
 import { StatusBar } from "../components/StatusBar";
 import { CommandPalette, type PaletteAction } from "../components/CommandPalette";
@@ -17,6 +17,7 @@ import SignInPrompt from "../components/SignInPrompt";
 import { BranchPanel } from "../components/BranchPanel";
 import { StashPanel } from "../components/StashPanel";
 import { HistoryPanel } from "../components/HistoryPanel";
+import { ConflictResolver } from "../components/ConflictResolver";
 import { History } from "lucide-react";
 import {
   abortMerge,
@@ -63,6 +64,12 @@ export function App() {
   const [branchPanelOpen, setBranchPanelOpen] = useState(false);
   const [stashPanelOpen, setStashPanelOpen] = useState(false);
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
+  /**
+   * The conflict resolver draws itself when git stops with conflicts, which is
+   * the one state in git that does not resolve on its own. It is state rather
+   * than derived from a list so it can stay open across a refresh of that list.
+   */
+  const [conflictOpen, setConflictOpen] = useState(false);
   /** A one-line note shown by a panel that wants to confirm what it just did. */
   const [note, setNote] = useState<string | null>(null);
   /** How many stashes there are, for a number on the toolbar. Zero draws no
@@ -110,6 +117,12 @@ export function App() {
       () => setStashCount(0),
     );
     void fetchChanges(selectedId).then(setFiles, () => setFiles([]));
+    // A stopped merge is the one state that will not go away by itself, so the
+    // resolver appears on its own rather than waiting to be found.
+    void readConflicts(selectedId).then(
+      (index) => setConflictOpen(index.entries.length > 0),
+      () => setConflictOpen(false),
+    );
   }, [selectedId]);
 
   /** Show the card for a failed action and record it in history. */
@@ -538,6 +551,16 @@ export function App() {
 
         {historyPanelOpen && selectedId !== null ? (
           <HistoryPanel repoId={selectedId} onError={reportError} onClose={() => setHistoryPanelOpen(false)} />
+        ) : null}
+
+        {conflictOpen && selectedId !== null ? (
+          <ConflictResolver
+            repoId={selectedId}
+            onChanged={() => void refreshChanges()}
+            onError={reportError}
+            onNote={setNote}
+            onClose={() => setConflictOpen(false)}
+          />
         ) : null}
 
         {branchPanelOpen && selectedId !== null ? (

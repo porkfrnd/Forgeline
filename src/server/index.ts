@@ -27,6 +27,15 @@ import {
   pushRepo,
 } from "./git/remote.js";
 import {
+  abortOperation,
+  continueOperation,
+  keepBoth,
+  readConflictSide,
+  readConflicts,
+  resolveConflict,
+  writeResolvedFile,
+} from "./git/conflicts.js";
+import {
   blameFile,
   fileHistory,
   readCommit,
@@ -1056,6 +1065,169 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
         ? null
         : "You are signed out of Forgeline. GitHub still lists this app under your authorised OAuth apps, where you can revoke it if you want to.",
     });
+  });
+
+  /* --------------------------------------------------------------- *
+   * Conflicts (Milestone 7).
+   *
+   * The one moment git stops and waits. Every resolver action takes a snapshot
+   * of the working tree first, because "take theirs" is exactly the choice a
+   * user regrets, and an undo that cannot restore the tree is not an undo.
+   * --------------------------------------------------------------- */
+
+  app.get("/api/repos/:id/conflicts", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const index = await readConflicts(repo.path);
+    return c.json({ entries: index.entries, operation: index.operation });
+  });
+
+  /** One side of one conflicted file, as text, for the side-by-side view. */
+  app.get("/api/repos/:id/conflicts/side", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const path = c.req.query("path");
+    const sideParam = c.req.query("side");
+    if (path === undefined || path.length === 0) {
+      return c.json({ code: "bad-request", title: "Which file?" }, 400);
+    }
+    const side = sideParam === "theirs" ? "theirs" : sideParam === "base" ? "base" : "ours";
+    const result = await readConflictSide(repo.path, path, side);
+    if (!result.ok) return gitFailure(c, { stdout: "", stderr: result.output, exitCode: 128, command: `git show :${side}:${path}` });
+    return c.json({ ok: true, text: result.text });
+  });
+
+  /** Take one side of a conflict. */
+  app.post("/api/repos/:id/conflicts/resolve", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ path?: unknown; choice?: unknown }>();
+    if (typeof body.path !== "string" || body.path.length === 0) {
+      return c.json({ code: "bad-request", title: "Which file?" }, 400);
+    }
+    if (body.choice !== "ours" && body.choice !== "theirs") {
+      return c.json({ code: "bad-request", title: "Which side?" }, 400);
+    }
+    const snapshot = await takeSnapshot(repo.path);
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        body.choice === "ours"
+          ? `Took our version of ${body.path}`
+          : `Took their version of ${body.path}`,
+        () => resolveConflict(repo.path, body.path as string, body.choice as "ours" | "theirs"),
+        { undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref } },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, resolved: result.resolved, choice: result.choice, snapshot: snapshot.ref });
+  });
+
+  /** Keep both versions, markers and all, for a hand edit. */
+  app.post("/api/repos/:id/conflicts/keep-both", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ path?: unknown }>();
+    if (typeof body.path !== "string" || body.path.length === 0) {
+      return c.json({ code: "bad-request", title: "Which file?" }, 400);
+    }
+    const snapshot = await takeSnapshot(repo.path);
+    const result = await queue.run(repo.path, () =>
+      journaled(repo.path, `Kept both versions of ${body.path}`, () =>
+        keepBoth(repo.path, body.path as string),
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, snapshot: snapshot.ref });
+  });
+
+  /** Write a hand-edited resolution in full. */
+  app.post("/api/repos/:id/conflicts/write", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ path?: unknown; content?: unknown }>();
+    if (typeof body.path !== "string" || body.path.length === 0) {
+      return c.json({ code: "bad-request", title: "Which file?" }, 400);
+    }
+    if (typeof body.content !== "string") {
+      return c.json({ code: "bad-request", title: "There was nothing to write." }, 400);
+    }
+    const snapshot = await takeSnapshot(repo.path);
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        `Wrote my own resolution for ${body.path}`,
+        () => writeResolvedFile(repo.path, body.path as string, body.content as string),
+        { undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref } },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, snapshot: snapshot.ref });
+  });
+
+  /**
+   * Finish the stopped operation. The editor is disabled through the
+   * environment, because `merge --continue` opens one and a dialog this
+   * interface cannot answer is a hang it caused itself.
+   */
+  app.post("/api/repos/:id/conflicts/continue", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ operation?: unknown }>().catch(() => ({}) as { operation?: unknown });
+    const operation = typeof body.operation === "string" ? body.operation : "merge";
+    const index = await readConflicts(repo.path);
+    if (index.entries.length > 0) {
+      // Refused here rather than by git, so the card can name the files.
+      return c.json(
+        {
+          code: "unmerged-files",
+          title: "Some conflicts are still unresolved.",
+          explanation: `There is still an unresolved conflict in ${index.entries[0]?.path ?? "this repository"}, so this cannot finish yet.`,
+        },
+        409,
+      );
+    }
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        operation === "merge" ? "Finished the merge" : `Finished the ${operation}`,
+        () => continueOperation(repo.path, operation),
+        { undoable: false, notUndoableReason: "Finishing a merge creates a commit; that is a new commit, not a switch." },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, output: result.output });
+  });
+
+  /** Abandon the stopped operation and put the tree back. */
+  app.post("/api/repos/:id/conflicts/abort", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ operation?: unknown }>().catch(() => ({}) as { operation?: unknown });
+    const operation = typeof body.operation === "string" ? body.operation : "merge";
+    const snapshot = await takeSnapshot(repo.path);
+    const result = await queue.run(repo.path, () =>
+      journaled(repo.path, `Abandoned the ${operation}`, () =>
+        abortOperation(repo.path, operation),
+        { undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref } },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, snapshot: snapshot.ref });
   });
 
   /* --------------------------------------------------------------- *

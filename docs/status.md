@@ -251,7 +251,7 @@ to `polling` while changes are still reported.
 Gaps 9 and 13 (app-data cache and persisted settings) both want the same
 storage module; they should land together rather than twice.
 
-### Milestone 7 — branches, stashes, history, and blame done
+### Milestone 7 — complete
 
 Every branch operation is journalled and answers with the branch git is actually
 on afterwards, read back from `symbolic-ref` rather than remembered from the
@@ -277,6 +277,14 @@ layout. Blame uses `--porcelain` for the same reason. 14 unit and 5 e2e tests;
 `git blame` on a path git doesn't have exits 128, and that is passed through to
 the translator as a real card rather than flattened into "this file has no
 history".
+
+**The conflict resolver.** It appears on its own, because a stopped merge is
+the one state in git that does not go away by itself. Each file is shown with
+all three versions beside it and three answers — this side, the other side, or
+both. "Keep both" stages nothing, on purpose: staging a conflicted path is what
+makes git consider the conflict resolved, so a button with that label that hid
+the conflict would be the worst thing this feature could do. 11 unit and 6 e2e
+tests, all driving a real merge into a real conflict.
 
 Two translator rules were corrected while verifying this slice, both found by
 tests rather than by reading, and both recorded in docs/progress.md: a port

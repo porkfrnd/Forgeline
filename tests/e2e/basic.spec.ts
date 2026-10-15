@@ -2091,3 +2091,175 @@ test.describe("Milestone 7 history and blame", () => {
     }
   });
 });
+
+/**
+ * Milestone 7: the conflict resolver.
+ *
+ * The resolver appears on its own when a merge stops, because a stopped merge is
+ * the one state in git that does not resolve by itself. Every assertion is
+ * answered by git, not by what the API said.
+ */
+test.describe("Milestone 7 conflict resolver", () => {
+  async function makeConflictedRepo(baseUrl: string, cookie: string, name: string) {
+    const root = mkdtempSync(join(tmpdir(), `fl-e2e-conflict-${name}-`));
+    const dir = join(root, "demo");
+    mkdirSync(dir, { recursive: true });
+    spawnSync("git", ["init", "-q", "-b", "main", "."], { cwd: dir });
+    spawnSync("git", ["config", "user.email", "ada@fixture.invalid"], { cwd: dir });
+    spawnSync("git", ["config", "user.name", "Ada Fixture"], { cwd: dir });
+    writeFileSync(join(dir, "f.txt"), "line\n");
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["commit", "-q", "-m", "Base"], { cwd: dir });
+    spawnSync("git", ["switch", "-q", "-c", "theirs"], { cwd: dir });
+    writeFileSync(join(dir, "f.txt"), "theirs change\n");
+    spawnSync("git", ["commit", "-q", "-am", "Theirs"], { cwd: dir });
+    spawnSync("git", ["switch", "-q", "main"], { cwd: dir });
+    writeFileSync(join(dir, "f.txt"), "ours change\n");
+    spawnSync("git", ["commit", "-q", "-am", "Ours"], { cwd: dir });
+    const merge = spawnSync("git", ["merge", "theirs"], { cwd: dir, encoding: "utf8" });
+    await setRootsForTest(baseUrl, [root]);
+    const id = await registerRepoForTest(baseUrl, cookie, dir);
+    return { root, dir, id, merge };
+  }
+
+  const status = (dir: string): string =>
+    spawnSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+
+  const conflicting = (dir: string): string[] =>
+    spawnSync("git", ["diff", "--name-only", "--diff-filter=U"], { cwd: dir, encoding: "utf8" }).stdout
+      .split("\n")
+      .filter((line) => line.length > 0);
+
+  test("a stopped merge opens the resolver on its own", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir, merge } = await makeConflictedRepo(baseUrl, cookie, "auto");
+
+    try {
+      // The fixture really stopped: git prints CONFLICT and left an unmerged
+      // path, which is the state this whole test is about.
+      expect(merge.stdout).toContain("CONFLICT");
+      expect(conflicting(dir)).toEqual(["f.txt"]);
+
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      const resolver = page.locator(".conflict-resolver");
+      // Nobody opened it. This is the one state in git that does not go away
+      // by itself, so the interface is the thing that has to say so.
+      await expect(resolver).toHaveCount(1, { timeout: 10000 });
+      await expect(resolver).toContainText("The merge stopped at 1 file");
+      await expect(resolver).toContainText("nothing has been lost");
+      await expect(resolver).toContainText("both sides changed the same lines");
+      await page.screenshot({ path: "screenshots/m7-conflict.png" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the three versions of a file are shown together, side by side", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root } = await makeConflictedRepo(baseUrl, cookie, "sides");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".conflict-name").click();
+      const detail = page.locator(".conflict-detail");
+      await expect(detail).toBeVisible();
+
+      // All three versions, in words rather than in o/m and t/m.
+      await expect(detail).toContainText("This side");
+      await expect(detail).toContainText("The other side");
+      await expect(detail).toContainText("Where they split");
+      await expect(detail).toContainText("ours change");
+      await expect(detail).toContainText("theirs change");
+      // And the shared parent, which is what "where they split" means.
+      await expect(detail).toContainText("line");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("taking one side resolves the merge, and git agrees", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeConflictedRepo(baseUrl, cookie, "resolve");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".conflict-name").click();
+      await page.getByRole("button", { name: "Take the other side" }).click();
+      await page.waitForTimeout(1500);
+
+      expect(readFileSync(join(dir, "f.txt"), "utf8")).toBe("theirs change\n");
+      expect(conflicting(dir)).toEqual([]);
+      // Staged, so the merge can be finished.
+      expect(status(dir)).toContain("M");
+      // And the resolver closes itself: it is a panel about nothing otherwise.
+      await expect(page.locator(".conflict-resolver")).toHaveCount(0);
+      await expect(page.locator(".work-note")).toContainText("Took the other side");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("leaving both versions keeps the markers and the conflict in place", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeConflictedRepo(baseUrl, cookie, "keep");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".conflict-name").click();
+      await page.getByRole("button", { name: "Keep both, I'll edit it myself" }).click();
+      await page.waitForTimeout(1500);
+
+      // The markers are still there. This button is the one that must never
+      // stage the file, because staging a conflicted path is what makes git
+      // consider the conflict resolved — and then a button that said "keep
+      // both" would have hidden it.
+      expect(readFileSync(join(dir, "f.txt"), "utf8")).toContain("<<<<<<<");
+      expect(conflicting(dir)).toEqual(["f.txt"]);
+      await expect(page.locator(".conflict-resolver")).toHaveCount(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("abandoning the merge restores the tree to before it started", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeConflictedRepo(baseUrl, cookie, "abort");
+    const before = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.getByRole("button", { name: "Abandon it and get back to before" }).click();
+      await page.waitForTimeout(1500);
+
+      expect(readFileSync(join(dir, "f.txt"), "utf8")).toBe("ours change\n");
+      const after = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(after).toBe(before);
+      // Still merging? No. The conflict is gone with the merge.
+      expect(conflicting(dir)).toEqual([]);
+      await expect(page.locator(".conflict-resolver")).toHaveCount(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("finishing while conflicts remain is refused, with the files named", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeConflictedRepo(baseUrl, cookie, "early");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      // The button says how many are left, so it cannot be pressed into an
+      // early finish without the user noticing what it will do.
+      await expect(page.getByRole("button", { name: "1 left to decide" })).toBeDisabled();
+      expect(conflicting(dir)).toEqual(["f.txt"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

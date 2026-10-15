@@ -378,3 +378,24 @@ The fix chooses the shape first and reads the name from the right end of it, whi
 - The two e2e tests that failed on `refs/stash`-style details were the test's fault (`git switch -c` on a branch that already exists fails silently, and `git rev-parse HEAD~2` past the root commits prints the literal argument). Both are the kind of thing that only shows up when the assertion is answered by git instead of by the code under test.
 
 **A design decision worth recording.** `git blame` on a path git doesn't have exits 128 with `fatal: no such path 'x' in HEAD`, and the first version flattened that into an empty list — which tells the user "this file has no history". That is a different statement from "there is no such file", and the second is the true one. Blame now hands the failure through to the translator so the card says so, and there is a test in each layer asserting the two are not confused.
+
+## M7.4 — the conflict resolver, and five bugs that only real git produced
+
+**Steps and results:**
+
+1. `src/server/git/conflicts.ts` reads the index, classifies each conflict from the *stages git recorded*, reads any side as text, resolves by taking a side, keeps both, and finishes or abandons the stopped operation.
+2. The resolver opens on its own. A stopped merge is the one state in git that does not go away by itself, and leaving the user to notice it would be the most useless thing this feature could do.
+3. Every action takes a working-tree snapshot first, because "take theirs" is exactly the choice a user regrets.
+4. 11 unit and 6 e2e tests, all driving a real merge into a real conflict.
+
+**Five bugs found, and the list is worth keeping because every one of them would have passed a fixture test.**
+
+- **`ls-files -u` prints `<mode> <sha> <stage>\t<path>`, so the stage number is the third field.** The code looked for a line *starting* with "1 ", "2 ", or "3 ", which never matches. Every conflict read as "other" — wrong, and nothing crashed, which is why it survived until a test compared the kind.
+- **The merge marker is `MERGE_HEAD`, not the word "merge".** `git rev-parse --verify merge` resolves a branch that usually doesn't exist, so every in-progress merge looked like nothing was happening — the resolver would never have opened.
+- **`git show :0:<path>` has no stage 0 for a conflicted file**, so `hasMarkers` returned `false` on exactly the conflicted files. It now reads the working tree with `readFileSync`.
+- **"Keep both" called `git add`**, which stages a conflicted path into stage 0 and makes git consider the conflict resolved. A button labelled "keep both" that then hid the conflict is the worst possible behaviour for this panel, so it now writes nothing and stages nothing, and an e2e test asserts the markers and the unmerged entry are both still there.
+- **The path escape check passed for `../elsewhere/x`**, because the *joined string* still begins with the repository's name. `resolve()` is applied to both sides before comparing, and a test writes a file outside the repository and asserts it survived.
+
+The one "bug" that was the test's fault is recorded too: taking "ours" leaves the file identical to what is already committed, so there is nothing to stage and no `M ` code in `git status --porcelain`. The assertion is now "no longer `UU`", which is the actual statement.
+
+suite: 202 unit / 140 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.
