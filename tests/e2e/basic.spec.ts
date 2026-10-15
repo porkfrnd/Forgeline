@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -196,6 +197,93 @@ test.describe("Forgeline skeleton", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test("repo list returns live status and prunes a deleted repo", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const root = mkdtempSync(join(tmpdir(), "fl-e2e-list-"));
+    try {
+      const repo = join(root, "demo");
+      mkdirSync(repo, { recursive: true });
+      // A real repo with one commit, so the branch reads back from git.
+      spawnSync("git", ["init", "-b", "main"], { cwd: repo });
+      spawnSync("git", ["config", "user.email", "t@example.com"], { cwd: repo });
+      spawnSync("git", ["config", "user.name", "T"], { cwd: repo });
+      writeFileSync(join(repo, "a.txt"), "one\n");
+      spawnSync("git", ["add", "a.txt"], { cwd: repo });
+      spawnSync("git", ["commit", "-m", "init"], { cwd: repo });
+      await setRootsForTest(baseUrl, [root]);
+      const id = await registerRepoForTest(baseUrl, cookie, repo);
+
+      const before = await request.get(`${baseUrl}/api/repos`, { headers: { cookie } });
+      expect(before.status()).toBe(200);
+      const listed = (await before.json()) as {
+        repos: { id: string; name: string; branch: string; changedFiles: number }[];
+      };
+      const row = listed.repos.find((r) => r.id === id);
+      expect(row).toBeTruthy();
+      expect(row?.name).toBe("demo");
+      expect(row?.branch).toBe("main");
+      expect(row?.changedFiles).toBe(0);
+
+      // Delete the repo: the next list call must drop it entirely.
+      rmSync(repo, { recursive: true, force: true });
+      const after = await request.get(`${baseUrl}/api/repos`, { headers: { cookie } });
+      const pruned = (await after.json()) as { repos: { id: string }[] };
+      expect(pruned.repos.find((r) => r.id === id)).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("scan endpoint finds nested repos and is idempotent", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const root = mkdtempSync(join(tmpdir(), "fl-e2e-scan-"));
+    try {
+      const alpha = join(root, "alpha");
+      const beta = join(root, "beta");
+      mkdirSync(join(alpha, ".git"), { recursive: true });
+      mkdirSync(join(beta, ".git"), { recursive: true });
+      mkdirSync(join(root, "node_modules", "skipped", ".git"), { recursive: true });
+
+      const first = await request.post(`${baseUrl}/api/repos/scan`, {
+        headers: { cookie, origin: `${baseUrl}`, "content-type": "application/json" },
+        data: JSON.stringify({ roots: [root] }),
+      });
+      expect(first.status()).toBe(200);
+      const body = (await first.json()) as { repos: { name: string; id: string }[] };
+      expect(body.repos.map((r) => r.name).sort()).toEqual(["alpha", "beta"]);
+      const ids = body.repos.map((r) => r.id);
+
+      // Scanning the same root again must not duplicate registry entries.
+      const second = await request.post(`${baseUrl}/api/repos/scan`, {
+        headers: { cookie, origin: `${baseUrl}`, "content-type": "application/json" },
+        data: JSON.stringify({ roots: [root] }),
+      });
+      const again = (await second.json()) as { repos: { id: string }[] };
+      expect(again.repos.map((r) => r.id).sort()).toEqual([...ids].sort());
+
+      const listed = await request.get(`${baseUrl}/api/repos`, { headers: { cookie } });
+      const all = (await listed.json()) as { repos: { id: string }[] };
+      for (const id of ids) {
+        expect(all.repos.filter((r) => r.id === id)).toHaveLength(1);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("scan endpoint rejects a body with no roots", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const res = await request.post(`${baseUrl}/api/repos/scan`, {
+      headers: { cookie, origin: `${baseUrl}`, "content-type": "application/json" },
+      data: JSON.stringify({}),
+    });
+    expect(res.status()).toBe(400);
+    await res.text();
   });
 
   // Directory symlinks need elevated rights on Windows CI runners.

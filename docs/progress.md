@@ -68,3 +68,32 @@ One dated entry per loop run. Never rewrite old entries. Newest entries go at th
 
 **Commit:** `698a921` — `feat(server): Update 1 repair — expired-token e2e, file route, traversal, docs`
 **Push:** `git push origin main` succeeded (`e69952d..698a921 main -> main`); `git ls-remote origin main` returns `698a9211856219f3eb262b90ae9eb81495c414a1`, matching local `main`.
+
+---
+
+## 2026-10-15 — Milestone 2, slice 1: repo discovery, git read helpers, live dashboard list
+
+**Slice:** Milestone 2 first slice — scanning, the `git.ts` read helpers, the live `GET /api/repos`, and the dashboard wired to real data.
+
+**Context:** Milestone 1 shipped a verified skeleton with an empty dashboard. `GET /api/repos` returned `{repos:[{id}]}` only, the registry had no removal, and the Sidebar/Header were static. The scan and git-helper scaffolds existed but were uncommitted and unverified.
+
+**Plan (checklist):**
+- [x] Verify the scan + git-helper scaffolds and their tests pass against real fixtures.
+- [x] Add `RepoSummary` to `src/shared/types.ts` and `summarizeRepo`/`summarizeRepos` in `src/server/repo-summary.ts` (never throws, sorted by path).
+- [x] Add `RepoRegistry.remove(id)` so a repo whose path vanished can be pruned.
+- [x] Make `GET /api/repos` return live status (name/path/branch/changed/ahead/behind) and prune vanished paths.
+- [x] Add `POST /api/repos/scan` (picked roots, bounded depth, registers what is found, idempotent).
+- [x] Wire the dashboard: `useRepos` hook (3s poll + focus refresh), Sidebar repo list, Header repo count.
+- [x] Unit tests for the helper and registry removal; e2e for both routes.
+- [x] Run the verify loop, update handoff docs, commit.
+
+**Steps and results:**
+1. Work — see checklist. `repoStatusFields` is called once per repo per refresh; git runs are `["-C", dir]` kept as their own argv elements with `GIT_OPTIONAL_LOCKS=0`.
+2. Static check — `typecheck` pass, `lint` pass, `lint:copy ok`. Two fixes along the way: `src/server/repo-summary.ts` originally imported from `../../shared/types.js` and `../registry.js` (one level too deep — it lives in `src/server/`, not a subfolder), and one new e2e assertion used `res.arrayBuffer()` on an `APIResponse`, which has no such member.
+3. Unit test — `vitest run`: 43 passed (7 files; was 27).
+4. Browser test — `playwright test`: 36 passed across desktop (1440px) and narrow (800px) — 18 tests x 2 widths, up from 15 x 2.
+5. Record and commit — see `docs/status.md` for the next step.
+
+**New tests:** `summarizeRepo` (clean repo, dirty repo, non-repo path -> `unknown` without throwing, explicit name), `summarizeRepos` (sorted by path), `RepoRegistry.remove` (drops from both maps, path re-registers with a new id, unknown id is a no-op), e2e "repo list returns live status and prunes a deleted repo", "scan endpoint finds nested repos and is idempotent", "scan endpoint rejects a body with no roots".
+
+**Known gaps recorded, not fixed:** no scan-result cache in app-data yet (gap 9), the "Choose folders" button is still static (gap 10), and `repoStatusFields` spawns three git processes per repo per refresh when the branch is already in the `status --porcelain=v2 --branch` header (gap 11). All three are listed in `docs/status.md` with their proving tests.

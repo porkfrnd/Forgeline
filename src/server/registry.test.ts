@@ -75,6 +75,25 @@ describe("RepoRegistry", () => {
     expect(registry.get("does-not-exist")).toBeUndefined();
   });
 
+  it("removes an entry and lets its path be re-registered", async () => {
+    const repo = join(dir, "demo");
+    mkdirSync(repo, { recursive: true });
+    const entry = await registry.register(repo);
+    const id = entry?.id ?? "";
+    registry.remove(id);
+    expect(registry.get(id)).toBeUndefined();
+    expect(registry.list()).toHaveLength(0);
+    // Same path, brand new id: the entry was really dropped from both maps.
+    const again = await registry.register(repo);
+    expect(again?.id).not.toBe(id);
+    expect(registry.list()).toHaveLength(1);
+  });
+
+  it("ignores removal of an unknown id", () => {
+    registry.remove("nope");
+    expect(registry.list()).toHaveLength(0);
+  });
+
   it("rejects escaping paths even for a known repo", async () => {
     const repo = join(dir, "demo");
     mkdirSync(repo, { recursive: true });

@@ -2,18 +2,20 @@ import { useState } from "react";
 import { useTheme } from "../theme/ThemeProvider";
 import { Header } from "../components/Header";
 import { Sidebar } from "../components/Sidebar";
+import { useRepos } from "./useRepos";
 
 const TABS = ["Changes", "History", "Branches", "Releases"] as const;
 
 export function App() {
   const { theme, setTheme } = useTheme();
+  const { repos, error } = useRepos();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Changes");
   const next = theme === "paper" ? "midnight" : "paper";
   return (
     <div className="shell">
-      <Header />
+      <Header repoCount={repos.length} />
       <div className="body">
-        <Sidebar />
+        <Sidebar repos={repos} loadError={error} />
         <main className="main">
           <div className="tabbar" role="tablist" aria-label="Repository views">
             {TABS.map((t) => (

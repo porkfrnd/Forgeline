@@ -45,6 +45,22 @@ export function runGit(
   });
 }
 
+export interface AheadBehind {
+  ahead: number;
+  behind: number;
+}
+
+export interface RepoStatusFields {
+  branch: string;
+  changedFiles: number;
+  ahead: number;
+  behind: number;
+}
+
+const OPTIONAL_LOCKS_ENV: Record<string, string> = {
+  GIT_OPTIONAL_LOCKS: "0",
+};
+
 export function parseGitVersion(output: string): { major: number; minor: number } | null {
   const m = output.match(/git version (\d+)\.(\d+)/);
   if (!m) return null;
@@ -59,4 +75,93 @@ export function meetsMinVersion(
   if (!v) return false;
   if (v.major !== minMajor) return v.major > minMajor;
   return v.minor >= minMinor;
+}
+
+/** Current branch name for a repo. A detached HEAD reports as `HEAD`
+ *  (the dashboard shows the short sha alongside it when available). */
+export async function currentBranch(repoPath: string): Promise<string> {
+  const res = await runGit([...gitInDirArgs(repoPath), "rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd: repoPath,
+    env: OPTIONAL_LOCKS_ENV,
+  });
+  if (res.exitCode !== 0) return "unknown";
+  const branch = res.stdout.trim();
+  if (branch.length === 0) return "unknown";
+  if (branch !== "HEAD") return branch;
+  const sha = await runGit([...gitInDirArgs(repoPath), "rev-parse", "--short", "HEAD"], {
+    cwd: repoPath,
+    env: OPTIONAL_LOCKS_ENV,
+  });
+  return sha.exitCode === 0 && sha.stdout.trim().length > 0
+    ? `HEAD (${sha.stdout.trim()})`
+    : "HEAD";
+}
+
+/** Count changed paths from NUL-separated `status --porcelain=v2 --branch`
+ *  output. Branch header lines (`# ...`) are not changes, so they are
+ *  skipped; every other record is one changed path. */
+export function parseStatusChangedFiles(porcelainV2Z: string): number {
+  let changed = 0;
+  for (const record of porcelainV2Z.split("\0")) {
+    if (record.length === 0) continue;
+    if (record.startsWith("#")) continue;
+    changed += 1;
+  }
+  return changed;
+}
+
+/** Parse `rev-list --left-right --count A...B` output (`"<ahead>\t<behind>"`). */
+export function parseRevListCount(output: string): AheadBehind {
+  const parts = output.trim().split(/\s+/);
+  const ahead = Number(parts[0]);
+  const behind = Number(parts[1]);
+  return {
+    ahead: Number.isInteger(ahead) && ahead >= 0 ? ahead : 0,
+    behind: Number.isInteger(behind) && behind >= 0 ? behind : 0,
+  };
+}
+
+/** Ahead/behind counts against the upstream. Repos without an upstream
+ *  report 0/0; the dashboard shows "no upstream" from the ahead/behind
+ *  being zero only when there is truly no upstream configured. */
+export async function aheadBehind(repoPath: string): Promise<AheadBehind> {
+  const upstream = await runGit(
+    [...gitInDirArgs(repoPath), "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    { cwd: repoPath, env: OPTIONAL_LOCKS_ENV },
+  );
+  if (upstream.exitCode !== 0) return { ahead: 0, behind: 0 };
+  const counts = await runGit(
+    [...gitInDirArgs(repoPath), "rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+    { cwd: repoPath, env: OPTIONAL_LOCKS_ENV },
+  );
+  if (counts.exitCode !== 0) return { ahead: 0, behind: 0 };
+  return parseRevListCount(counts.stdout);
+}
+
+/** Live dashboard fields for one repo. Never throws: when git fails the
+ *  repo reports `branch: "unknown"` with zero counts (the route still
+ *  answers 200 so one broken repo cannot hide the rest). */
+export async function repoStatusFields(repoPath: string): Promise<RepoStatusFields> {
+  const status = await runGit(
+    [...gitInDirArgs(repoPath), "status", "--porcelain=v2", "-z", "--branch"],
+    { cwd: repoPath, env: OPTIONAL_LOCKS_ENV },
+  );
+  if (status.exitCode !== 0) {
+    return { branch: "unknown", changedFiles: 0, ahead: 0, behind: 0 };
+  }
+  const [branch, counts] = await Promise.all([
+    currentBranch(repoPath),
+    aheadBehind(repoPath),
+  ]);
+  return {
+    branch,
+    changedFiles: parseStatusChangedFiles(status.stdout),
+    ahead: counts.ahead,
+    behind: counts.behind,
+  };
+}
+
+/** Keep the repo directory as its own argv element (never a shell string). */
+function gitInDirArgs(dir: string): string[] {
+  return ["-C", dir];
 }

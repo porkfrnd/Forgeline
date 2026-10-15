@@ -50,6 +50,16 @@ export class RepoRegistry {
     return [...this.byId.values()];
   }
 
+  /** Drop an entry whose path vanished (used to prune deleted/moved repos). */
+  remove(id: string): void {
+    const entry = this.byId.get(id);
+    if (!entry) return;
+    this.byId.delete(id);
+    if (this.byPath.get(entry.path)?.id === id) {
+      this.byPath.delete(entry.path);
+    }
+  }
+
   /** Resolve a repo-relative path for a known repo ID. Returns a PathCheck whose
    *  `path` is normalized but not yet symlink-resolved. */
   child(id: string, rel: string): PathCheck & { repo?: RepoEntry } {

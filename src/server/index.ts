@@ -5,7 +5,9 @@ import type { AddressInfo } from "node:net";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { createAuth, parseCookie, type AuthManager } from "./session.js";
-import { RepoRegistry } from "./registry.js";
+import { RepoRegistry, type RepoEntry } from "./registry.js";
+import { scanRepos, pathExists } from "./scan/scan.js";
+import { summarizeRepos } from "./repo-summary.js";
 import { resolveRealpath, stillInside } from "./paths.js";
 
 /** Largest repo file the preview route will serve (1 MiB). Milestone 3
@@ -207,8 +209,43 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
   });
 
   // Repo identity: the browser only ever sees opaque IDs. An unknown ID -> 404.
-  app.get("/api/repos", (c) => {
-    return c.json({ repos: registry.list().map((r) => ({ id: r.id })) });
+  // Live status: every entry is enriched with branch/changed/ahead/behind.
+  // Entries whose path vanished are pruned so deleted or moved repos do not
+  // linger on the dashboard.
+  app.get("/api/repos", async (c) => {
+    const alive: RepoEntry[] = [];
+    for (const entry of registry.list()) {
+      if (!pathExists(entry.path)) {
+        registry.remove(entry.id);
+        continue;
+      }
+      alive.push(entry);
+    }
+    return c.json({ repos: await summarizeRepos(alive.map((entry) => ({ entry }))) });
+  });
+
+  // Scan picked root folders and register what is found. The browser sends
+  // roots the user picked (never a whole-disk scan); each root becomes a
+  // configured root first so the inside-root check agrees with the scan.
+  app.post("/api/repos/scan", async (c) => {
+    const body = await c.req.json<{ roots?: unknown; maxDepth?: unknown }>();
+    if (!Array.isArray(body.roots) || !body.roots.every((p) => typeof p === "string")) {
+      return c.json({ code: "bad-request", title: "Missing roots." }, 400);
+    }
+    const maxDepth =
+      typeof body.maxDepth === "number" && body.maxDepth >= 0 && body.maxDepth <= 10
+        ? Math.floor(body.maxDepth)
+        : 4;
+    const roots = (body.roots as string[]).slice(0, 20);
+    const found = await scanRepos(roots, { maxDepth });
+    registry.setRoots([...registry.getRoots(), ...roots]);
+    const registered: { entry: RepoEntry; name?: string }[] = [];
+    for (const repo of found) {
+      const entry = await registry.register(repo.path);
+      if (!entry) continue;
+      registered.push({ entry, name: repo.name });
+    }
+    return c.json({ repos: await summarizeRepos(registered) });
   });
 
   // Milestone 2 will register scanned repos server-side. This endpoint exists

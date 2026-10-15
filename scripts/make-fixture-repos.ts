@@ -80,7 +80,7 @@ export function makeFixtureRepos(): FixtureSet {
   const behindRemote = mkBare("behind");
   initRepo(behindBase, behindRemote);
   const behind = mkWork("behind");
-  const cr = spawnSync("git", ["clone", behindRemote, behind], { encoding: "utf8" });
+  const cr = spawnSync("git", ["clone", "-b", "main", behindRemote, behind], { encoding: "utf8" });
   if (cr.status !== 0) throw new Error(`clone failed: ${cr.stderr}`);
   git(behindBase, ["config", "user.email", "test@example.com"]);
   writeFileSync(join(behindBase, "remote.txt"), "remote change\n");

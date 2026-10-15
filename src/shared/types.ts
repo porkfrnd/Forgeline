@@ -7,6 +7,12 @@ export interface RepoStatus {
   behind: number;
 }
 
+/** What the dashboard list endpoints return: a RepoStatus plus the opaque,
+ *  server-issued id the browser uses for every later request. */
+export interface RepoSummary extends RepoStatus {
+  id: string;
+}
+
 export interface Change {
   file: string;
   staged: boolean;
