@@ -2,7 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { serve } from "@hono/node-server";
 import { createAuth, parseCookie, type AuthManager } from "./session.js";
 import { RepoRegistry, type RepoEntry } from "./registry.js";
@@ -10,7 +10,11 @@ import { scanRepos, pathExists } from "./scan/scan.js";
 import { summarizeRepos } from "./repo-summary.js";
 import { RepoQueue } from "./queue.js";
 import { LiveWatcher, type LiveMode } from "./live/watcher.js";
-import { runGit } from "./git/git.js";
+import { runGit, withPaths } from "./git/git.js";
+import {
+  readChangedFiles,
+  readFileDiff,
+} from "./git/diff.js";
 import { resolveRealpath, stillInside } from "./paths.js";
 
 /** Largest repo file the preview route will serve (1 MiB). Milestone 3
@@ -385,6 +389,122 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     } catch {
       return c.notFound();
     }
+  });
+
+  // List the changed files for a repo: staged and unstaged together, each
+  // with its status letter and staged/unstaged flags. Used by the file list
+  // in the workbench before a file is opened in the diff viewer.
+  app.get("/api/repos/:id/changes", async (c) => {
+    const repo = registry.get(c.req.param("id"));
+    if (!repo) return c.notFound();
+    const files = await readChangedFiles(repo.path);
+    return c.json({ files });
+  });
+
+  // Diff for one file in one repo. `?staged=true` reads index against HEAD;
+  // otherwise worktree against the index. The path is validated against the
+  // registry like the file route.
+  app.get("/api/repos/:id/diff", async (c) => {
+    const repo = registry.get(c.req.param("id"));
+    if (!repo) return c.notFound();
+    const path = c.req.query("path") ?? "";
+    const checked = registry.child(c.req.param("id"), path);
+    if (!checked.repo || !checked.ok || !checked.path) {
+      return c.json(
+        { code: "bad-path", title: "That path is not inside this repository." },
+        400,
+      );
+    }
+    const staged = c.req.query("staged") === "true";
+    const diff = await readFileDiff(repo.path, path, staged);
+    return c.json(diff);
+  });
+
+  // Stage or unstage whole files. Body: `{ paths: string[] }`. Stage runs
+  // `git add -- <paths>`; unstage runs `git restore --staged -- <paths>`.
+  // Paths go behind `--` so a path beginning with `-` is never read as an
+  // option, and every call is serialised per repo through the queue.
+  async function stageUnstageFiles(c: Context, staged: boolean) {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ paths?: unknown }>();
+    if (!Array.isArray(body.paths) || !body.paths.every((p: unknown) => typeof p === "string")) {
+      return c.json({ code: "bad-request", title: "Missing paths." }, 400);
+    }
+    const paths = body.paths as string[];
+    const before = staged ? ["add"] : ["restore", "--staged"];
+    const args = withPaths(before, paths);
+    const res = await queue.run(repo.path, () =>
+      runGit(["-C", repo.path, ...args], { cwd: repo.path }),
+    );
+    if (res.exitCode !== 0) {
+      return c.json(
+        { code: "git-error", title: res.stderr.trim() || "git failed", command: res.command },
+        500,
+      );
+    }
+    return c.json({ ok: true });
+  }
+
+  app.post("/api/repos/:id/stage", async (c) => {
+    return stageUnstageFiles(c, true);
+  });
+
+  app.post("/api/repos/:id/unstage", async (c) => {
+    return stageUnstageFiles(c, false);
+  });
+
+  // Stage or unstage a single hunk. Body: `{ path: string, patch: string }`.
+  // Stage runs `git apply --cached -` (patch piped to stdin, index only);
+  // unstage runs `git apply --reverse --cached -`. The path is validated
+  // against the registry like the file route so a forged ID or escaping
+  // path is rejected before git ever runs.
+  async function stageUnstageHunk(c: Context, staged: boolean) {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ path?: unknown; patch?: unknown }>();
+    if (
+      typeof body.path !== "string" ||
+      body.path.length === 0 ||
+      typeof body.patch !== "string"
+    ) {
+      return c.json({ code: "bad-request", title: "Missing path or patch." }, 400);
+    }
+    const path = body.path;
+    const patch = body.patch;
+    const checked = registry.child(id, path);
+    if (!checked.repo || !checked.ok || !checked.path) {
+      return c.json(
+        { code: "bad-path", title: "That path is not inside this repository." },
+        400,
+      );
+    }
+    const args = staged ? ["apply", "--cached"] : ["apply", "--reverse", "--cached"];
+    const res = await queue.run(repo.path, () =>
+      runGit(["-C", repo.path, ...args, "-"], {
+        cwd: repo.path,
+        stdin: patch,
+      }),
+    );
+    if (res.exitCode !== 0) {
+      return c.json(
+        { code: "git-error", title: res.stderr.trim() || "git failed", command: res.command },
+        500,
+      );
+    }
+    return c.json({ ok: true });
+  }
+
+  app.post("/api/repos/:id/stage-hunk", async (c) => {
+    return stageUnstageHunk(c, true);
+  });
+
+  app.post("/api/repos/:id/unstage-hunk", async (c) => {
+    return stageUnstageHunk(c, false);
   });
 
   // Live updates over SSE. Authenticated like every other /api/* route, and

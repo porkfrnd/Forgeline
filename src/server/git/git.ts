@@ -13,6 +13,9 @@ export interface RunGitOptions {
   /** Kill the process after this long. Defaults to PATIENCE_MS; network
    *  operations pass a longer IMPATIENCE_MS. */
   timeoutMs?: number;
+  /** Text written to the process's stdin before it is closed. Used by
+   *  `git apply` when a hunk patch is piped in rather than read from a file. */
+  stdin?: string;
 }
 
 /** Long enough for a big local repo, short enough that a hung `status` never
@@ -43,6 +46,11 @@ export function runGit(
     let stdout = "";
     let stderr = "";
     let settled = false;
+    // Pipe stdin if provided, then close it so git does not wait forever.
+    if (opts.stdin !== undefined) {
+      child.stdin?.write(opts.stdin);
+      child.stdin?.end();
+    }
     const finish = (result: GitResult): void => {
       if (settled) return;
       settled = true;

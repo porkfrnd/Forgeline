@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { GitBranch } from "lucide-react";
 import { useTheme } from "../theme/ThemeProvider";
 import { useRepos } from "./useRepos";
+import { fetchChanges, type ChangeFile } from "./git.js";
 import { RepoRail } from "../components/RepoRail";
 import { StatusBar } from "../components/StatusBar";
 import { CommandPalette, type PaletteAction } from "../components/CommandPalette";
 import { AppearancePanel } from "../components/AppearancePanel";
+import { FileList } from "../components/FileList";
+import { DiffViewer } from "../components/DiffViewer";
 
 /**
  * The Workbench shell.
@@ -36,6 +39,26 @@ export function App() {
   }, [repos, selectedId]);
 
   const selected = repos.find((r) => r.id === selectedId) ?? null;
+
+  // Changed files for the selected repo, fetched from the server. Cleared
+  // whenever the selection changes so a stale file list never shows for a
+  // different repo.
+  const [files, setFiles] = useState<ChangeFile[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedFile(null);
+    setFiles([]);
+    if (selectedId === null) return;
+    (async () => {
+      try {
+        const fetched = await fetchChanges(selectedId);
+        setFiles(fetched);
+      } catch {
+        setFiles([]);
+      }
+    })();
+  }, [selectedId]);
 
   // The browser cannot hand the server an arbitrary filesystem path, so a
   // root is typed. Forgeline only ever scans what it is given.
@@ -174,19 +197,21 @@ export function App() {
         </section>
 
         <section className="panel worktable" data-ticks>
-          {selected ? (
-            <>
-              <p className="label">{selected.name}</p>
-              <p className="readout">{selected.changedFiles}</p>
-              <p className="muted">changed file{selected.changedFiles === 1 ? "" : "s"}</p>
-            </>
-          ) : (
+          {selectedId === null ? (
             <>
               <p className="message empty-title">No repository is open yet.</p>
               <p className="muted">
                 {error ?? "Scan a folder above to bring your repositories onto the workbench."}
               </p>
             </>
+          ) : selectedFile === null ? (
+            <FileList files={files} repoId={selectedId} onSelect={setSelectedFile} />
+          ) : (
+            <DiffViewer
+              repoId={selectedId}
+              path={selectedFile!}
+              onBack={() => setSelectedFile(null)}
+            />
           )}
         </section>
       </main>
