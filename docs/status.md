@@ -72,7 +72,7 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 | 1 | Skeleton: CLI + port logic, server serves the React app, theme tokens, layout shell (Paper + Midnight) | done |
 | 2 | Git core: `git.ts` wrapper, parsers, repo scanning, dashboard with live status | done |
 | 3 | Commit flow: file list, hunk staging, diff viewer, commit, sanity check card | done (`milestone-3`) |
-| 4 | Safety: action journal, snapshots, undo timeline, rescue mode, confirmation previews | in progress |
+| 4 | Safety: action journal, snapshots, undo timeline, rescue mode, confirmation previews | done (`milestone-4`) |
 | 5 | Error translator with the full starter catalogue | not started |
 | 6 | Remote and sign-in: pull, push, GitHub device flow, lazy prompt | not started |
 | 7 | Branches, stash, history graph, blame, conflict resolver | not started |
@@ -81,22 +81,31 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 
 ## Current milestone and slice
 
-- Milestone 1 (Skeleton) is complete and verified.
-- Milestone 2 slice 1 is **done and verified**: repo discovery (`scanRepos`), the `git.ts` read helpers (`currentBranch`, `aheadBehind`, `parseStatusChangedFiles`, `parseStatusBranch`, `parseRevListCount`, `repoStatusFields`), `GET /api/repos` returning live status with pruning of vanished paths, `POST /api/repos/scan` registering what a picked root contains, and the dashboard Sidebar/Header driven by that data through `useRepos`.
-- Milestone 2 slice 2 is **done and verified**: live updates. `chokidar` watches `.git/HEAD`, `.git/index`, `.git/refs` (plus `packed-refs`) per registered repo with a 3-second polling fallback, events are debounced, and real rows are pushed over the authenticated `/api/events` SSE endpoint. A per-repository single-writer queue serializes git calls in the same repo. The dashboard now consumes the stream instead of polling, and says so in the sidebar when the server is polling.
-- Next slice is Milestone 3: **the commit flow** — file list, hunk staging, diff viewer, commit, and the sanity-check card. `runGit` still needs a timeout and `--` before paths before that work lands (gap 6 below).
+- Milestones 1–3 are complete and verified. Milestone 4 (Safety) is complete and verified as of this gate; the tag below is its proof.
+- **What works now, end to end:** discovering repositories in folders you pick; live branch / changed-file / ahead-behind counts over an authenticated SSE stream with a 3-second polling fallback; viewing changed files; full unified diffs for both staged and unstaged state; staging and unstaging whole files or individual hunks; committing with a sanity-check card that names every staged file; discarding local changes with a snapshot taken first; and an Undo timeline that lists every journaled action, shows the exact git command behind a toggle, and offers an Undo button only where recovery has been proven. Rescue mode snapshots, parks HEAD under a private backup ref, and resets to a clean tree.
+- **What does not exist yet:** the error translator (5), remotes and sign-in (6), branches/stash/history/blame/conflicts (7), the release manager (8), and polish (9). None of them have a control drawn, so nothing in the interface is a dead button.
+- Next slice is Milestone 5: **the error translator** with the full starter catalogue, built into `git.ts` so every caller that runs git speaks the same language.
 
 ## Latest `verify` result
 
 `npm run verify` is green on this machine (Node v24.21.0, git 2.47.3, Linux).
+Measured at the **Milestone 4 gate**, commit `30d56c3`:
 
+- check:contrast: pass — 297 text/graphic pairs + 264 lane checks across 7 families
 - typecheck: pass (`tsc -p tsconfig.json && tsc -p tsconfig.web.json`)
 - lint: pass (`eslint .`)
 - lint:copy: pass (`node scripts/lint-copy.js`)
-- test: 58 passed (`vitest run`, 9 files: session, registry, paths, basic, git, scan, repo-summary, queue, live/watcher)
-- test:e2e: 38 passed (`playwright test`, desktop 1440px + narrow 800px; 19 tests x 2 widths)
+- test: 104 passed (`vitest run`, 13 files: appdata, journal, snapshots, session, registry, paths, basic, git, diff, scan, repo-summary, queue, live/watcher)
+- test:e2e: 66 passed (`playwright test`, desktop 1440px + narrow 800px; 33 tests x 2 widths)
+- build: pass (frontend 3.35s, server emitted to `dist/`)
 
-Evidence: this session's `npm run verify` tail shows the 38 e2e checks passing (`38 passed (7.6s)`) and `npm test` shows `Tests 58 passed (58)`.
+Evidence: this session's `npm run verify` tail shows `104 passed (104)`, `66 passed (17.6s)`, and `✓ built in 3.35s`.
+
+### Milestone-4 gate extras (per `docs/decisions.md` §7)
+
+- `npm audit`: **6 vulnerabilities, all dev-only and pre-existing.** They are in `tinypool`/`vitest` and their transitives, every one of which lives in `devDependencies`. The shipped `dependencies` are `@hono/node-server`, `chokidar`, `commander`, `hono`, and `open`, and installing the packed tarball into a clean directory reports `found 0 vulnerabilities`. The offered fix (`npm audit fix --force`) would install vitest 5, a breaking change that breaks the existing suite, so it is deliberately not applied.
+- **Packed-tarball smoke test: passed.** `npm pack` then `npm install` into a fresh directory gives a working `forgeline` bin; the installed CLI starts, prints a bootstrap URL on 127.0.0.1, answers `/api/health` with `{ok:true,gitVersion:"2.47.3",liveMode:"stopped"}`, serves the built `index.html` at `/` (200), answers `/api/journal`, and shuts down cleanly with `Forgeline stopped. Goodbye.` (exit 0).
+- **Three-OS CI results: not run.** This repo has no CI workflow yet; that is a Milestone 9 deliverable. Recorded here rather than implied.
 
 ## Verified flows (Milestone 1)
 
