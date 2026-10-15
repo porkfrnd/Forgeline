@@ -1,7 +1,7 @@
 # Status
 
 > Last updated: 2026-10-15
-> Describes commit: e69952de8b2afe34ad9445a018413a3bb56fd635 (Update 1 security baseline, pushed to origin/main; `git ls-remote origin main` shows the same hash)
+> Describes commit: 698a9211856219f3eb262b90ae9eb81495c414a1 (Update 1 repair: expired-token e2e, file route, traversal, docs; pushed to origin/main; `git ls-remote origin main` shows the same hash)
 
 ## What Forgeline is
 
