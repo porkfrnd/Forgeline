@@ -398,6 +398,39 @@ body {
   font-size: 11px;
   font-weight: 700;
 }
+/* The path is the control that opens the diff, so it looks like text but
+   behaves like a button — inherited from .file-path. */
+.file-path-button {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-path-button:hover { color: var(--accent); text-decoration: underline; }
+
+/* The confirmation preview for discarding. It appears in place of the Discard
+   button rather than as a modal, so what you are about to destroy is next to
+   the file it belongs to. */
+.discard-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-basis: 100%;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: var(--hairline-w) solid var(--hairline);
+}
+.discard-warning { margin: 0; flex: 1 1 100%; font-size: 0.75rem; color: var(--status-conflict); }
 .file-status {
   flex: none;
   width: 90px;
@@ -578,3 +611,72 @@ body {
     transition-duration: 1ms !important;
   }
 }
+
+/* ---------- undo timeline ---------- */
+
+/* A side panel like the appearance panel, but wider and taller: the journal
+   is a list you read, so it gets room to be read in rather than a 320px wedge
+   that truncates every description. */
+.journal {
+  position: fixed;
+  top: 56px;
+  right: var(--panel-pad);
+  bottom: var(--panel-pad);
+  z-index: 30;
+  width: min(420px, calc(100vw - 2 * var(--panel-pad)));
+  background: var(--overlay);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  overflow: hidden;
+}
+[data-surface="glass"] .journal { backdrop-filter: blur(var(--surface-blur)); }
+.journal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--gap); }
+.journal-head .label { margin: 0; display: flex; align-items: center; gap: 6px; }
+.journal .row-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 0; }
+
+.journal-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: var(--gap) 0;
+  border-top: var(--hairline-w) solid var(--hairline);
+}
+.journal-row:first-child { border-top: none; }
+
+.journal-main { min-width: 0; flex: 1; }
+.journal-description { margin: 0; font-family: var(--font-message); }
+.journal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 4px 0 0;
+  font-size: 0.75rem;
+}
+/* The command a journal entry ran is the "explain, don't hide" promise made
+   visible, so it is shown verbatim rather than paraphrased. */
+.journal-command {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border: var(--hairline-w) solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--muted);
+}
+.journal-note {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: var(--status-conflict);
+}
+.journal-actions { display: flex; align-items: flex-start; gap: 6px; flex-shrink: 0; }
+.journal-confirm {
+  margin: 0 0 6px;
+  font-size: 0.75rem;
+  max-width: 22ch;
+}
+.button.link { background: none; border-color: transparent; color: var(--accent); padding: 2px 0; }
+.button.link:hover { border-color: var(--accent); }

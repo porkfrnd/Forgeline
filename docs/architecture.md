@@ -94,7 +94,11 @@ Both are private refs, so neither appears in `git stash list`; a snapshot visibl
 | Push / publish release (not built) | irreversible | It reached a remote, so it cannot be undone from here. The timeline will say so in one sentence and offer a compensating revert commit. |
 | Merge / rebase / reset (not built) | compensating or irreversible | To be classified once built, against real fixture repos. |
 
-No Undo is offered anywhere until its recovery test passes; until then an action is labelled "Cannot be undone" with the reason. Push and release entries are marked non-undoable at write time via `journaled`'s `undoable: false` option.
+**Undo plans.** Every entry carries an `UndoPlan` written by `journaled` at the moment the action ran — the paths, the patch, the head to return to — because the code that just ran `git add` already knows what the reverse is, and parsing it back out of a command string later would be guesswork. `undoCommand()` is the single mapping from a plan to its git, shared by `POST /api/journal/:id/undo` and the tests. An entry with no plan, or one marked `undoable: false`, answers with the reason in one sentence instead of executing something random, so a missing recovery never becomes a wrong recovery.
+
+**No Undo is offered anywhere until its recovery test passes**; until then the entry is labelled "Cannot be undone" with the reason. Push and release entries are marked non-undoable at write time via `journaled`'s `undoable: false` option.
+
+**Rescue mode.** `POST /api/repos/:id/rescue` is the spec's "reset to clean state, keep my work" button. A snapshot is taken, HEAD is parked under `refs/forgeline/backup/<ts>` so no local commit is lost, then `reset --hard` runs, then the whole thing is journaled with the snapshot as its own undo. Both the snapshot and the backup therefore appear in the timeline, and neither appears in `git stash list`.
 
 ## Health score formula (Milestone 2)
 

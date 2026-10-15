@@ -53,7 +53,7 @@ Remaining slices for the two milestones:
 | M3 | **Gate:** full verify, tag, push | done (`milestone-3`) |
 | M4.1 | Journal and app-data storage | done (roots persist across restart) |
 | M4.2 | Snapshots and the recovery kind per action | done (journal, snapshots, discard wired in) |
-| M4.3 | Undo timeline, rescue mode, confirmation previews | 2.5 h |
+| M4.3 | Undo timeline, rescue mode, confirmation previews | done (timeline + rescue + discard preview in the UI) |
 | M4 | **Gate:** full verify, tag, push | 0.5 h |
 | — | Final screenshot review and final report | 1 h |
 

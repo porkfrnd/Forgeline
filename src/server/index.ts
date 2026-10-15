@@ -10,12 +10,12 @@ import { scanRepos, pathExists } from "./scan/scan.js";
 import { summarizeRepos } from "./repo-summary.js";
 import { RepoQueue } from "./queue.js";
 import { LiveWatcher, type LiveMode } from "./live/watcher.js";
-import { runGit, withPaths } from "./git/git.js";
+import { runGit, readRefs, withPaths } from "./git/git.js";
 import {
   readChangedFiles,
   readFileDiff,
 } from "./git/diff.js";
-import { journaled } from "./journal.js";
+import { journaled, undoCommand } from "./journal.js";
 import { takeSnapshot } from "./snapshots.js";
 import { resolveRealpath, stillInside } from "./paths.js";
 import { readJson, writeJson } from "./appdata.js";
@@ -455,6 +455,12 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
         repo.path,
         `${verb} ${paths.length === 1 ? "1 file" : `${paths.length} files`}: ${paths.join(", ")}`,
         () => runGit(["-C", repo.path, ...args], { cwd: repo.path }),
+        // Undo of a stage is an unstage of the same paths, and vice versa.
+        {
+          undo: staged
+            ? { kind: "unstage-paths", paths }
+            : { kind: "stage-paths", paths },
+        },
       ),
     );
     if (res.exitCode !== 0) {
@@ -511,6 +517,9 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
             cwd: repo.path,
             stdin: patch,
           }),
+        // The patch is the undo, unchanged: applying it in the other
+        // direction with --cached puts exactly this hunk back where it was.
+        { undo: { kind: "apply-patch", patch, reverse: !staged } },
       ),
     );
     if (res.exitCode !== 0) {
@@ -548,11 +557,21 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     if (message.trim().length === 0) {
       return c.json({ code: "bad-request", title: "Missing commit message." }, 400);
     }
+    const beforeRefs = await readRefs(repo.path);
     const res = await queue.run(repo.path, () =>
-      journaled(repo.path, `Committed: ${message.trim()}`, () =>
-        runGit(["-C", repo.path, "commit", "-m", message.trim()], {
-          cwd: repo.path,
-        }),
+      journaled(
+        repo.path,
+        `Committed: ${message.trim()}`,
+        () =>
+          runGit(["-C", repo.path, "commit", "-m", message.trim()], {
+            cwd: repo.path,
+          }),
+        // Undo moves HEAD back but never a commit: `reset --soft` keeps the
+        // tree and index exactly as the commit left them, so nothing the
+        // user wrote is lost. Only offered when there is a HEAD to return to.
+        beforeRefs.head !== null
+          ? { undo: { kind: "reset-soft", head: beforeRefs.head } }
+          : { undoable: false, notUndoableReason: "This was the first commit in an empty repository, so there is no earlier commit to return to." },
       ),
     );
     if (res.exitCode !== 0) {
@@ -596,16 +615,13 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     // deleted, because a checkout of a path with no committed version is a
     // no-op that would silently leave the file behind.
     const res = await queue.run(repo.path, () =>
-      journaled(repo.path, `Discarded local changes in ${paths.join(", ")}`, async () => {
+      journaled(
+        repo.path,
+        `Discarded local changes in ${paths.join(", ")}`,
+        async () => {
         // Per path, not per call: one `checkout --force` covering every path
         // fails outright when any single path is untracked, and would then
-        // silently leave the tracked ones dirty. Two kinds of change exist
-        // because git cannot throw both away with one call:
-        //
-        //  - a tracked path is restored with `checkout --force`;
-        //  - a new path — never committed — is dropped from the index and
-        //    deleted, because checkout of a path with no committed version is
-        //    a no-op that would leave the file sitting there.
+        // silently leave the tracked ones dirty.
         let last = { stdout: "", stderr: "", exitCode: 0, command: "" };
         for (const p of paths as string[]) {
           const inHead = await runGit(["-C", repo.path, "cat-file", "-e", `HEAD:${p}`], {
@@ -648,7 +664,14 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
           last = { stdout: "", stderr: "", exitCode: 0, command: `rm ${p}` };
         }
         return last;
-      }),
+        },
+        {
+          // The snapshot taken before anything was thrown away is the undo,
+          // and the timeline names it so the user can see what comes back.
+          undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref },
+          snapshotRef: snapshot.ref,
+        },
+      ),
     );
     if (res.exitCode !== 0) {
       return c.json(
@@ -658,10 +681,112 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     }
     return c.json({ ok: true, snapshotRef: snapshot.ref });
   });
+  // The action journal, newest first, for the Undo timeline. Read-only here:
   // entries are written by `journaled` around each mutating call, and undo
   // itself is a new entry rather than an edit of an old one.
   app.get("/api/journal", async (c) => {
     return c.json({ entries: await readJournal() });
+  });
+
+  // Undo one journal entry. Takes a snapshot FIRST, always, because an undo
+  // that goes wrong has to be recoverable too — and because undo is itself
+  // journaled, it can be undone back. An entry with no plan says plainly that
+  // it cannot be undone rather than running something random.
+  app.post("/api/journal/:id/undo", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const entries = await readJournal();
+    const entry = entries.find((e) => e.id === id);
+    if (!entry) return c.notFound();
+    if (!entry.undoable || entry.undo === undefined) {
+      return c.json(
+        {
+          code: "not-undoable",
+          title:
+            entry.notUndoableReason ??
+            "No proven way to reverse this action yet, so Undo is not offered.",
+        },
+        400,
+      );
+    }
+    const args = undoCommand(entry.undo);
+    if (args === null) return c.notFound();
+
+    const snapshot = await queue.run(entry.repoPath, () => takeSnapshot(entry.repoPath));
+    const res = await queue.run(entry.repoPath, () =>
+      journaled(
+        entry.repoPath,
+        // An em-dash rather than "Undid: ...", because the description it
+        // wraps already starts with its own verb ("Committed: ..."), and
+        // "Undid: Committed: Commit to undo" reads as a stutter in a timeline.
+        `Undone — ${entry.description}`,
+        async () => {
+          if (entry.undo?.kind === "apply-patch") {
+            return runGit(["-C", entry.repoPath, ...args], {
+              cwd: entry.repoPath,
+              stdin: entry.undo.patch,
+            });
+          }
+          return runGit(["-C", entry.repoPath, ...args], { cwd: entry.repoPath });
+        },
+        { snapshotRef: snapshot.ref },
+      ),
+    );
+    if (res.exitCode !== 0) {
+      return c.json(
+        { code: "git-error", title: res.stderr.trim() || "git failed" },
+        500,
+      );
+    }
+    return c.json({ ok: true, snapshotRef: snapshot.ref });
+  });
+
+  // Rescue mode: "reset to clean state, keep my work." One button. A snapshot
+  // of the working tree, the current HEAD parked under a private backup ref so
+  // no local commit is lost, then the repo is put back to match its remote.
+  // The snapshot and the backup both appear in the timeline afterwards, so
+  // anything can be brought back.
+  app.post("/api/repos/:id/rescue", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+
+    const snapshot = await queue.run(repo.path, () => takeSnapshot(repo.path));
+
+    // Park HEAD under a private ref before touching anything, so local commits
+    // survive even if the reset goes further than the user meant.
+    const backupRef = `refs/forgeline/backup/${Date.now()}`;
+    const head = await runGit(["-C", repo.path, "rev-parse", "HEAD"], { cwd: repo.path });
+    if (head.exitCode === 0 && head.stdout.trim().length > 0) {
+      await queue.run(repo.path, () =>
+        runGit(["-C", repo.path, "update-ref", backupRef, head.stdout.trim()], {
+          cwd: repo.path,
+        }),
+      );
+    }
+
+    const res = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        "Rescue: reset to clean state, keeping work in a snapshot",
+        () =>
+          runGit(["-C", repo.path, "reset", "--hard"], {
+            cwd: repo.path,
+          }),
+        {
+          snapshotRef: snapshot.ref,
+          undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref },
+        },
+      ),
+    );
+    if (res.exitCode !== 0) {
+      return c.json(
+        { code: "git-error", title: res.stderr.trim() || "git failed" },
+        500,
+      );
+    }
+    return c.json({ ok: true, snapshotRef: snapshot.ref, backupRef });
   });
 
   // Live updates over SSE. Authenticated like every other /api/* route, and

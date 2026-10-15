@@ -21,6 +21,20 @@ export interface JournalRefs {
   hasStash: boolean;
 }
 
+/** How to reverse an action, recorded at write time by the code that knows
+ *  what it just did. Deriving this later from the command string would be
+ *  guesswork: `journaled` already knows the paths, the patch, and the refs,
+ *  so it writes the plan down rather than leaving a parser to reconstruct it.
+ *
+ *  A missing plan means undo is not offered for that entry, which is the
+ *  honest default for an action whose recovery has not been proven. */
+export type UndoPlan =
+  | { kind: "reset-soft"; head: string }
+  | { kind: "restore-snapshot"; snapshotRef: string }
+  | { kind: "unstage-paths"; paths: string[] }
+  | { kind: "stage-paths"; paths: string[] }
+  | { kind: "apply-patch"; patch: string; reverse: boolean };
+
 export interface JournalEntry {
   id: string;
   repoPath: string;
@@ -36,6 +50,11 @@ export interface JournalEntry {
   undoable: boolean;
   /** One sentence saying why it cannot be undone, when `undoable` is false. */
   notUndoableReason?: string;
+  /** The plan `POST /api/journal/:id/undo` executes. */
+  undo?: UndoPlan;
+  /** The snapshot taken before a risky action, so the timeline can name what
+   *  would restore it. Only set for entries whose plan is a snapshot restore. */
+  snapshotRef?: string;
 }
 
 const JOURNAL_FILE = "journal.json";
@@ -85,7 +104,12 @@ export async function journaled(
   repoPath: string,
   description: string,
   run: () => Promise<GitRun>,
-  opts: { undoable?: boolean; notUndoableReason?: string } = {},
+  opts: {
+    undoable?: boolean;
+    notUndoableReason?: string;
+    undo?: UndoPlan;
+    snapshotRef?: string;
+  } = {},
 ): Promise<GitRun> {
   const before = await readRefs(repoPath);
   const result = await run();
@@ -104,6 +128,33 @@ export async function journaled(
     ...(opts.notUndoableReason !== undefined
       ? { notUndoableReason: opts.notUndoableReason }
       : {}),
+    ...(opts.undo !== undefined ? { undo: opts.undo } : {}),
+    ...(opts.snapshotRef !== undefined ? { snapshotRef: opts.snapshotRef } : {}),
   });
   return result;
+}
+
+/** Build the git command that executes an undo plan. Exported so the undo
+ *  endpoint and the tests share one definition of "the reverse of this". */
+export function undoCommand(plan: UndoPlan): string[] | null {
+  switch (plan.kind) {
+    case "reset-soft":
+      return ["reset", "--soft", plan.head];
+    case "restore-snapshot":
+      return ["read-tree", "--reset", "-u", plan.snapshotRef];
+    case "unstage-paths":
+      return paths(["restore", "--staged"], plan.paths);
+    case "stage-paths":
+      return paths(["add"], plan.paths);
+    case "apply-patch":
+      return plan.reverse
+        ? ["apply", "--reverse", "--cached", "-"]
+        : ["apply", "--cached", "-"];
+  }
+}
+
+/** Append `--` before an argument list that carries user-supplied paths, so
+ *  a path that happens to start with a dash cannot be read as an option. */
+function paths(command: string[], list: string[]): string[] {
+  return [...command, "--", ...list];
 }

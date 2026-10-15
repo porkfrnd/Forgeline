@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appDataDir, readJson, setAppDataDirForTest } from "./appdata.js";
-import { appendJournal, journaled, readJournal, type JournalEntry } from "./journal.js";
+import { appendJournal, journaled, readJournal, undoCommand, type JournalEntry } from "./journal.js";
 import { readRefs } from "./git/git.js";
 import { runGit } from "./git/git.js";
 
@@ -190,6 +190,104 @@ describe("journaled", () => {
       const [entry] = await readJournal();
       expect(entry?.undoable).toBe(false);
       expect(entry?.notUndoableReason).toContain("remote");
+    } finally {
+      rmSync(join(repo, ".."), { recursive: true, force: true });
+    }
+  }, 60000);
+});
+
+describe("undoCommand", () => {
+  it("maps each plan to the git that reverses it", () => {
+    expect(undoCommand({ kind: "reset-soft", head: "a".repeat(40) })).toEqual([
+      "reset",
+      "--soft",
+      "a".repeat(40),
+    ]);
+    expect(undoCommand({ kind: "unstage-paths", paths: ["a.txt"] })).toEqual([
+      "restore",
+      "--staged",
+      "--",
+      "a.txt",
+    ]);
+    expect(undoCommand({ kind: "stage-paths", paths: ["a.txt", "b c.txt"] })).toEqual([
+      "add",
+      "--",
+      "a.txt",
+      "b c.txt",
+    ]);
+    expect(
+      undoCommand({
+        kind: "apply-patch",
+        patch: "@@ -1 +1 @@\n-a\n+b\n",
+        reverse: true,
+      }),
+    ).toEqual(["apply", "--reverse", "--cached", "-"]);
+    expect(
+      undoCommand({ kind: "apply-patch", patch: "p", reverse: false }),
+    ).toEqual(["apply", "--cached", "-"]);
+  });
+
+  it("puts paths behind -- so a path cannot be read as an option", () => {
+    const args = undoCommand({ kind: "unstage-paths", paths: ["-rf.txt"] });
+    expect(args).toContain("--");
+    // The dash-leading name survives as a path, not as an option.
+    expect(args?.[args.indexOf("--") + 1]).toBe("-rf.txt");
+  });
+
+  it("records the snapshot ref in a snapshot restore plan", () => {
+    const ref = "refs/forgeline/snapshots/1729000000000";
+    const args = undoCommand({ kind: "restore-snapshot", snapshotRef: ref });
+    expect(args).toEqual(["read-tree", "--reset", "-u", ref]);
+  });
+});
+
+describe("journaled with an undo plan", () => {
+  let dir: string;
+  const original = process.env.FORGELINE_DATA_DIR;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "fl-journal-undo-"));
+    process.env.FORGELINE_DATA_DIR = dir;
+    setAppDataDirForTest(null);
+  });
+
+  afterEach(() => {
+    setAppDataDirForTest(null);
+    if (original === undefined) delete process.env.FORGELINE_DATA_DIR;
+    else process.env.FORGELINE_DATA_DIR = original;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("writes the plan it was given, so undo needs no guesswork later", async () => {
+    const repo = await makeRepo();
+    try {
+      // The file has to exist or `git add` fails, and a failed action is
+      // deliberately not journaled.
+      writeFileSync(join(repo, "b.txt"), "two\n");
+      await journaled(
+        repo,
+        "Staged 1 file: b.txt",
+        () => runGit(["-C", repo, "add", "b.txt"], { cwd: repo }),
+        { undo: { kind: "unstage-paths", paths: ["b.txt"] } },
+      );
+      const [entry] = await readJournal();
+      expect(entry?.undo).toEqual({ kind: "unstage-paths", paths: ["b.txt"] });
+    } finally {
+      rmSync(join(repo, ".."), { recursive: true, force: true });
+    }
+  }, 60000);
+
+  it("leaves undo absent when no plan was given, which is the honest default", async () => {
+    const repo = await makeRepo();
+    try {
+      await journaled(repo, "Committed: x", () =>
+        runGit(["-C", repo, "commit", "--allow-empty", "-m", "x"], { cwd: repo }),
+      );
+      const [entry] = await readJournal();
+      expect(entry?.undo).toBeUndefined();
+      // Undoable is still true: the entry says what it did, and the timeline
+      // decides. An absent plan is what stops a button being offered.
+      expect(entry?.undoable).toBe(true);
     } finally {
       rmSync(join(repo, ".."), { recursive: true, force: true });
     }

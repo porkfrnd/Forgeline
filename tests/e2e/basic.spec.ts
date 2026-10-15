@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, existsSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serverInfo, mintToken, expireTokenForTest, sessionCookie, setRootsForTest, registerRepoForTest } from "./helpers.js";
@@ -780,5 +780,205 @@ test.describe("Milestone 4 journal", () => {
       rmSync(join(dir, ".."), { recursive: true, force: true });
     }
   });
-});
 
+  test("undo restores the refs and the work tree it recorded", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      // Stage, then commit, so there is a real ref move to put back.
+      writeFileSync(join(dir, "a.txt"), "changed by hand\n");
+      await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["a.txt"] },
+      });
+      await request.post(`${baseUrl}/api/repos/${id}/commit`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { message: "Commit to undo" },
+      });
+      const headAfterCommit = spawnSync("git", ["rev-parse", "HEAD"], {
+        cwd: dir,
+        encoding: "utf8",
+      }).stdout.trim();
+
+      const journal = await (await request.get(`${baseUrl}/api/journal`, { headers: { cookie } })).json() as {
+        entries: Array<{ id: string; description: string; undo?: unknown }>;
+      };
+      const commitEntry = journal.entries.find((e) => e.description.includes("Commit to undo"));
+      expect(commitEntry).toBeTruthy();
+      // The entry must carry a plan, or there is nothing safe to run.
+      expect(commitEntry?.undo).toBeTruthy();
+
+      const undone = await request.post(`${baseUrl}/api/journal/${commitEntry!.id}/undo`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: {},
+      });
+      expect(undone.status()).toBe(200);
+
+      const headAfterUndo = spawnSync("git", ["rev-parse", "HEAD"], {
+        cwd: dir,
+        encoding: "utf8",
+      }).stdout.trim();
+      // HEAD moved back, so the commit is no longer the tip.
+      expect(headAfterUndo).not.toBe(headAfterCommit);
+      // But the working tree is untouched: reset --soft keeps the tree and the
+      // index, so nothing the user wrote was thrown away by undoing.
+      expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("changed by hand\n");
+      const status = spawnSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" });
+      expect(status.stdout).toContain("M ");
+
+      // Undo is itself journaled, so it can be undone back.
+      const after = await (await request.get(`${baseUrl}/api/journal`, { headers: { cookie } })).json() as {
+        entries: Array<{ description: string }>;
+      };
+      expect(after.entries[0]?.description).toContain("Undone — Committed: Commit to undo");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("undoing a discard brings the exact text back", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      writeFileSync(join(dir, "keepme.txt"), "text that must survive\n");
+      await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["keepme.txt"] },
+      });
+      const discarded = await request.post(`${baseUrl}/api/repos/${id}/discard`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["keepme.txt"] },
+      });
+      expect(discarded.status()).toBe(200);
+      expect(existsSync(join(dir, "keepme.txt"))).toBe(false);
+
+      const journal = await (await request.get(`${baseUrl}/api/journal`, { headers: { cookie } })).json() as {
+        entries: Array<{ id: string; description: string }>;
+      };
+      const entry = journal.entries.find((e) => e.description.includes("Discarded"));
+      expect(entry?.id).toBeTruthy();
+
+      const undone = await request.post(`${baseUrl}/api/journal/${entry!.id}/undo`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: {},
+      });
+      expect(undone.status()).toBe(200);
+      expect(readFileSync(join(dir, "keepme.txt"), "utf8")).toBe("text that must survive\n");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("rescue resets to a clean tree and parks HEAD under a private ref", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      const headBefore = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      writeFileSync(join(dir, "a.txt"), "dirty\n");
+
+      const rescued = await request.post(`${baseUrl}/api/repos/${id}/rescue`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: {},
+      });
+      expect(rescued.status()).toBe(200);
+      const body = (await rescued.json()) as {
+        ok: boolean;
+        snapshotRef: string;
+        backupRef: string;
+      };
+      expect(body.ok).toBe(true);
+      expect(body.backupRef.startsWith("refs/forgeline/backup/")).toBe(true);
+
+      // The working tree is clean: the discard really happened.
+      const status = spawnSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" });
+      expect(status.stdout.trim()).toBe("");
+
+      // HEAD is parked under the private ref, so no commit is lost.
+      const parked = spawnSync("git", ["rev-parse", body.backupRef], {
+        cwd: dir,
+        encoding: "utf8",
+      });
+      expect(parked.stdout.trim()).toBe(headBefore);
+
+      // And none of the machinery leaks into the user's stash list.
+      const stash = spawnSync("git", ["stash", "list"], { cwd: dir, encoding: "utf8" });
+      expect(stash.stdout.trim()).toBe("");
+
+      // The rescue is journaled and can be undone, which restores the work.
+      const journal = await (await request.get(`${baseUrl}/api/journal`, { headers: { cookie } })).json() as {
+        entries: Array<{ id: string; description: string }>;
+      };
+      const entry = journal.entries.find((e) => e.description.includes("Rescue"));
+      expect(entry?.id).toBeTruthy();
+      const undone = await request.post(`${baseUrl}/api/journal/${entry!.id}/undo`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: {},
+      });
+      expect(undone.status()).toBe(200);
+      expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("dirty\n");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("undo of an entry that does not exist is a 404, not a silent no-op", async ({ request }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const missing = await request.post(`${baseUrl}/api/journal/not-a-real-id/undo`, {
+      headers: { cookie, "Content-Type": "application/json" },
+      data: {},
+    });
+    expect(missing.status()).toBe(404);
+  });
+
+  test("the timeline shows plain English, the command, and an Undo button", async ({
+    page,
+    request,
+  }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      writeFileSync(join(dir, "a.txt"), "changed by hand\n");
+      await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["a.txt"] },
+      });
+      await request.post(`${baseUrl}/api/repos/${id}/commit`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { message: "Show me in the timeline" },
+      });
+
+      const token = await mintToken(baseUrl);
+      await page.goto(`${baseUrl}/?t=${token}`);
+
+      await page.getByRole("button", { name: "Undo timeline" }).click();
+      const panel = page.locator(".journal");
+
+      // The commit is described in plain English, not as a raw git string.
+      await expect(panel.locator(".journal-row").first()).toContainText(
+        "Committed: Show me in the timeline",
+      );
+
+      // "Explain, don't hide": the exact command is behind a toggle.
+      await panel.locator(".button.link").first().click();
+      // The recorded command includes the `-C <dir>` argv element too, so
+      // assert on what the action does rather than on an exact spelling.
+      await expect(panel.locator(".journal-command").first()).toContainText(
+        "commit -m Show me in the timeline",
+      );
+
+      // An entry whose recovery is proven gets an Undo button, not a label
+      // saying it cannot be undone.
+      await expect(
+        panel.locator(".journal-row").first().getByRole("button", { name: "Undo" }),
+      ).toBeVisible();
+      await expect(panel.locator(".journal-row").first()).not.toContainText("Cannot be undone");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+});

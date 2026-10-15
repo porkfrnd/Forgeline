@@ -77,6 +77,108 @@ export async function commit(
   });
 }
 
+/** Discard local changes in the given files. The server snapshots BEFORE it
+ *  throws anything away, and returns the ref so the caller can say exactly
+ *  what would come back. */
+export type DiscardResult = StageResult & { snapshotRef?: string };
+
+export async function discardFiles(
+  repoId: string,
+  paths: string[],
+): Promise<DiscardResult> {
+  const res = await fetch(`/api/repos/${encodeURIComponent(repoId)}/discard`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths }),
+  });
+  const parsed = (await res
+    .json()
+    .catch(() => ({}))) as { code?: string; title?: string; snapshotRef?: string };
+  if (!res.ok) {
+    return {
+      ok: false,
+      code: parsed.code ?? `http-${res.status}`,
+      title: parsed.title ?? `HTTP ${res.status}`,
+    };
+  }
+  return { ok: true, snapshotRef: parsed.snapshotRef };
+}
+
+/** Rescue mode: snapshot, park HEAD under a private backup ref, reset hard. */
+export type RescueResult = StageResult & { snapshotRef?: string; backupRef?: string };
+
+export async function rescueRepo(repoId: string): Promise<RescueResult> {
+  const res = await fetch(`/api/repos/${encodeURIComponent(repoId)}/rescue`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const parsed = (await res
+    .json()
+    .catch(() => ({}))) as {
+    code?: string;
+    title?: string;
+    snapshotRef?: string;
+    backupRef?: string;
+  };
+  if (!res.ok) {
+    return {
+      ok: false,
+      code: parsed.code ?? `http-${res.status}`,
+      title: parsed.title ?? `HTTP ${res.status}`,
+    };
+  }
+  return {
+    ok: true,
+    snapshotRef: parsed.snapshotRef,
+    backupRef: parsed.backupRef,
+  };
+}
+
+/** One journal entry, in the Undo timeline. */
+export interface JournalEntry {
+  id: string;
+  repoPath: string;
+  at: string;
+  description: string;
+  command: string | null;
+  refs: {
+    before: { head: string | null; branch: string | null; hasStash: boolean };
+    after: { head: string | null; branch: string | null; hasStash: boolean };
+  };
+  undoable: boolean;
+  notUndoableReason?: string;
+  snapshotRef?: string;
+}
+
+/** The journal, newest first. */
+export async function fetchJournal(): Promise<JournalEntry[]> {
+  const res = await fetch("/api/journal", { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = (await res.json()) as { entries?: unknown };
+  if (!Array.isArray(body.entries)) return [];
+  return body.entries as JournalEntry[];
+}
+
+/** Undo one journal entry. The server snapshots first and journals the undo. */
+export async function undoEntry(id: string): Promise<StageResult> {
+  const res = await fetch(`/api/journal/${encodeURIComponent(id)}/undo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const parsed = (await res.json().catch(() => ({}))) as {
+      code?: string;
+      title?: string;
+    };
+    return {
+      ok: false,
+      code: parsed.code ?? `http-${res.status}`,
+      title: parsed.title ?? `HTTP ${res.status}`,
+    };
+  }
+  return { ok: true };
+}
+
 /** Changed-file records for a repo, staged and unstaged together. */
 export interface ChangeFile {
   path: string;

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ChangeFile } from "../app/git.js";
-import { stageFiles, unstageFiles } from "../app/git.js";
+import { stageFiles, unstageFiles, discardFiles } from "../app/git.js";
 
 /** One changed file in the file list: its status letter, staged/unstaged
  *  flags, and buttons to stage or unstage the whole file. Clicking the row
@@ -18,6 +18,8 @@ export function FileList({
 }) {
   const [staging, setStaging] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [discarding, setDiscarding] = useState<string | null>(null);
 
   const stageFile = async (file: ChangeFile) => {
     setStaging((s) => new Set([...s, file.path]));
@@ -57,6 +59,22 @@ export function FileList({
     }
   };
 
+  const discardFile = async (file: ChangeFile) => {
+    setDiscarding(file.path);
+    setConfirming(null);
+    try {
+      const res = await discardFiles(repoId, [file.path]);
+      if (!res.ok) {
+        setMessage(`Could not discard ${file.path}: ${res.title}`);
+        return;
+      }
+      setMessage(null);
+      void onChange?.();
+    } finally {
+      setDiscarding(null);
+    }
+  };
+
   const letterLabel: Record<ChangeFile["letter"], string> = {
     M: "Modified",
     A: "Added",
@@ -91,11 +109,7 @@ export function FileList({
           const isBoth = file.staged && file.unstaged;
           const busy = staging.has(file.path);
           return (
-            <li
-              key={file.path}
-              className="row file-row"
-              onClick={() => onSelect(file.path)}
-            >
+            <li key={file.path} className="row file-row">
               <span className="file-letter">{file.letter}</span>
               <span className="file-status">
                 {isStaged
@@ -106,7 +120,16 @@ export function FileList({
                       ? "staged + unstaged"
                       : "untracked"}
               </span>
-              <span className="file-path">{file.originalPath ? `${file.originalPath} → ${file.path}` : file.path}</span>
+              {/* The path, not the row, is what opens the diff. A row-level
+                  handler would fire when a button inside it is clicked, which
+                  is how "Stage" used to also open the diff viewer. */}
+              <button
+                type="button"
+                className="file-path-button"
+                onClick={() => onSelect(file.path)}
+              >
+                {file.originalPath ? `${file.originalPath} → ${file.path}` : file.path}
+              </button>
               <div className="file-actions">
                 {(!isStaged || isBoth) && (
                   <button
@@ -127,6 +150,37 @@ export function FileList({
                   </button>
                 )}
               </div>
+              {confirming === file.path ? (
+                <div className="discard-confirm">
+                  <p className="discard-warning">
+                    Throw away every change in <span className="mono">{file.path}</span>? A
+                    snapshot is saved first, and the Undo timeline will name it.
+                  </p>
+                  <button
+                    type="button"
+                    className="button primary"
+                    disabled={discarding === file.path}
+                    onClick={() => void discardFile(file)}
+                  >
+                    {discarding === file.path ? "Discarding…" : "Discard changes"}
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => setConfirming(null)}
+                  >
+                    Keep
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="button discard-button"
+                  onClick={() => setConfirming(file.path)}
+                >
+                  Discard
+                </button>
+              )}
             </li>
           );
         })}

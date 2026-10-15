@@ -10,6 +10,8 @@ import { AppearancePanel } from "../components/AppearancePanel";
 import { FileList } from "../components/FileList";
 import { DiffViewer } from "../components/DiffViewer";
 import { CommitComposer } from "../components/CommitComposer";
+import { UndoTimeline } from "../components/UndoTimeline";
+import { History } from "lucide-react";
 
 /**
  * The Workbench shell.
@@ -25,7 +27,9 @@ export function App() {
   const { repos, error, liveMode } = useRepos();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [journalOpen, setJournalOpen] = useState(false);
   const settingsRef = useRef<HTMLButtonElement>(null);
+  const journalRef = useRef<HTMLButtonElement>(null);
 
   // Keep a selection that still exists. A repo pruned after its path vanished
   // must not leave the worktable pointing at nothing.
@@ -138,6 +142,12 @@ export function App() {
       group: "Repositories",
       run: () => document.getElementById("scan-input")?.focus(),
     },
+    {
+      id: "undo-timeline",
+      label: "Undo timeline…",
+      group: "Safety",
+      run: () => setJournalOpen(true),
+    },
   ];
 
   return (
@@ -172,6 +182,17 @@ export function App() {
           onClick={() => setAppearanceOpen((v) => !v)}
         >
           {appearance.density === "compact" ? "Compact" : "Cozy"}
+        </button>
+        <button
+          ref={journalRef}
+          type="button"
+          className="button"
+          aria-expanded={journalOpen}
+          aria-label="Undo timeline"
+          onClick={() => setJournalOpen((v) => !v)}
+        >
+          <History size={14} strokeWidth={1.5} aria-hidden="true" />
+          History
         </button>
       </header>
 
@@ -238,6 +259,14 @@ export function App() {
       <CommandPalette actions={actions} />
       {appearanceOpen ? (
         <AppearancePanel closeRef={settingsRef} onClose={() => setAppearanceOpen(false)} />
+      ) : null}
+      {journalOpen ? (
+        <UndoTimeline
+          repoPath={selected?.path ?? null}
+          onChanged={refreshChanges}
+          closeRef={journalRef}
+          onClose={() => setJournalOpen(false)}
+        />
       ) : null}
     </div>
   );
