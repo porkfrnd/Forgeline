@@ -48,6 +48,23 @@ Each decision lists its date, the choice, the alternatives rejected, and the rea
 - **Alternatives rejected:** a condensed summary (rejected — the spec requires an unchanged copy as the source of truth).
 - **Reason:** the spec says `docs/spec.md` is "a copy of this build prompt, unchanged".
 
+## Update 1 (2026-10-14)
+
+- **Source:** a mid-build amendment delivered in-chat. Where it disagrees with `docs/spec.md`, the amendment wins. `docs/spec.md` is untouched.
+- **Scope kept:** only the security hardening (§5) and the GitHub remote setup (§2) were applied to the existing Milestone 1 code. Milestones are otherwise unchanged; the plan is still core (1-6) before extras (7-9).
+- **Feasibility verdicts (Update 1, sections 1-10):**
+  - §1 Orient: feasible as written. Done: `git status`/`log`/`branch` read, handoff files re-read, `npm ci` clean, `verify` green, status corrected where the run disagreed.
+  - §2 GitHub remote (`https://github.com/porkfrnd/Forgeline`): feasible with limits. `gh` is authenticated on this machine, so the first push can proceed. Never force-push; tokens never touch URLs, config, docs, or logs.
+  - §3 Scope control: feasible as written. Core exit criteria recorded in `docs/status.md`; nothing from 7-9 starts until the core gates pass.
+  - §4 Recovery contract: feasible as written, but not yet implemented (it belongs to Milestone 4). Write-ahead journal, state tokens, pending-entry recovery cards, and SIGKILL failure-injection tests are all scheduled there. No Undo label is offered anywhere until its recovery test passes.
+  - §5 Security tightening: feasible as written, applied to Milestone 1 now. Gaps found and closed: the Origin check previously trusted the absence of `sec-fetch-site` (plain clients send none), Content-Type matching was case-sensitive, and `RepoRegistry.setRoots` stored raw strings so a symlinked root compared wrong. Fixes: explicit Origin allow-list for same-host+port, case-insensitive `application/json` requirement on writes, roots resolved per `register()` call. Proven by 26 unit tests and 22 e2e tests (replay/expired token, bad Host, cross-origin POST, non-JSON write, no-CORS, traversal body check, forged repo ID, symlinked root).
+  - §6 Git operation contracts: feasible as written, scheduled for Milestone 3. CRLF, no-trailing-newline, rename, binary, mode-change, symlink, and non-Latin filename fixtures are required before hunk staging ships.
+  - §7 Proportionate verification: feasible as written. Logic slices skip browser runs; interface slices add Playwright + Paper/Midnight screenshots; write paths, journal, snapshots, auth, and the HTTP layer always run their full suites; milestone gates run everything plus `npm audit`, the packed-tarball smoke test, and the three-OS CI results.
+  - §8 Dependencies/npm name: feasible as written. Every new dependency gets a license/maintenance/platform/install check recorded here. `npm view forgeline` runs immediately before the user publishes; never `npm publish` from a session.
+  - §9 Spec corrections: feasible as written; all already match the code (Node >= 22, `prepack`, git 2.31+, fixed git env, askpass-only tokens, `Accept: application/json`, GitLab device grant >= 17.9 with PAT fallback, in-memory tokens without a keychain, tokenized banner, folder-picker first run, corrected fix-button wording, real conflict/SSH features, 30-day/50-snapshot retention, chokidar + 3s polling fallback, static skeletons, `lint:copy` skipping `docs/`, remote actions marked non-undoable).
+  - §10 Milestone reports: feasible as written. Each gate writes verification output, working flows, limitations/Deferred/unconfirmed items, tag + pushed hash + `ls-remote` confirmation, and the next concrete step into `docs/status.md`.
+- **Alternatives rejected:** deferring the §5 fixes to Milestone 4 (rejected — M1's exit criteria demand the security tests pass now); weakening the Origin check to `sec-fetch-site`-only (rejected — curl sends no such header); resolving roots once at `setRoots` (rejected — a root symlink would then compare unresolved against resolved repo paths).
+
 ## LICENSE (open)
 
 - **Status:** unresolved. `package.json` currently declares `MIT` as a placeholder. The spec says to ask the user which license to use and not to choose silently. **Action needed from the user** before Milestone 9 / any publish.

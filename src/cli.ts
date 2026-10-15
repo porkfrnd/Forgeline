@@ -48,7 +48,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       }
       const wantPort = parsed.port;
       try {
-        const { server, actualPort, token } = await startServer({
+        const { server, actualPort, token, refreshUrl } = await startServer({
           port: wantPort,
           hostname: "127.0.0.1",
         });
@@ -56,6 +56,20 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         console.log(`Forgeline is running at ${url}`);
         if (opts.open) {
           await open(url);
+        }
+        // If the bootstrap link expires before it is opened, a keypress in the
+        // terminal prints a fresh URL and invalidates the old one. Only wired
+        // up when stdin is an interactive TTY, so tests and pipes are unaffected.
+        if (process.stdin.isTTY) {
+          process.stdin.setEncoding("utf8");
+          process.stdin.on("data", (chunk: string) => {
+            if (chunk.includes("\n") || chunk.includes("\r")) {
+              const fresh = refreshUrl();
+              if (fresh !== null) {
+                console.log(`Forgeline is running at ${fresh}`);
+              }
+            }
+          });
         }
         const shutdown = () => {
           const srv = server as unknown as {

@@ -15,7 +15,7 @@ export const SERVER_INFO_PATH = join(tmpdir(), "forgeline-e2e-server.json");
 export default async function globalSetup(): Promise<void> {
   const child = spawn("node", ["dist/cli.js", "--no-open"], {
     cwd: process.cwd(),
-    env: process.env,
+    env: { ...process.env, FORGELINE_E2E: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
