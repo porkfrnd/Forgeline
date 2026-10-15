@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, unlink } from "node:fs/promises";
 import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
@@ -16,6 +16,7 @@ import {
   readFileDiff,
 } from "./git/diff.js";
 import { journaled } from "./journal.js";
+import { takeSnapshot } from "./snapshots.js";
 import { resolveRealpath, stillInside } from "./paths.js";
 import { readJson, writeJson } from "./appdata.js";
 import { readJournal } from "./journal.js";
@@ -563,7 +564,100 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     return c.json({ ok: true });
   });
 
-  // The action journal, newest first, for the Undo timeline. Read-only here:
+  // Discarding local changes: the first of the spec's "risky" actions, and
+  // the reason snapshots exist. A snapshot is taken BEFORE anything is
+  // thrown away, so the recovery contract is met by construction, and its
+  // ref is returned in the response body so the confirmation preview and the
+  // Undo timeline can point at exactly what would restore these files.
+  app.post("/api/repos/:id/discard", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    let paths: unknown;
+    try {
+      const body = await c.req.json<{ paths?: unknown }>();
+      paths = body.paths;
+    } catch {
+      paths = undefined;
+    }
+    if (!Array.isArray(paths) || paths.length === 0) {
+      return c.json(
+        { code: "bad-request", title: "Pick at least one file to discard." },
+        400,
+      );
+    }
+
+    const snapshot = await queue.run(repo.path, () => takeSnapshot(repo.path));
+
+    // Two kinds of change, because git cannot throw both away with one call:
+    // a tracked path is restored with `checkout --force`, and a new path —
+    // one that has never been committed — is dropped from the index and
+    // deleted, because a checkout of a path with no committed version is a
+    // no-op that would silently leave the file behind.
+    const res = await queue.run(repo.path, () =>
+      journaled(repo.path, `Discarded local changes in ${paths.join(", ")}`, async () => {
+        // Per path, not per call: one `checkout --force` covering every path
+        // fails outright when any single path is untracked, and would then
+        // silently leave the tracked ones dirty. Two kinds of change exist
+        // because git cannot throw both away with one call:
+        //
+        //  - a tracked path is restored with `checkout --force`;
+        //  - a new path — never committed — is dropped from the index and
+        //    deleted, because checkout of a path with no committed version is
+        //    a no-op that would leave the file sitting there.
+        let last = { stdout: "", stderr: "", exitCode: 0, command: "" };
+        for (const p of paths as string[]) {
+          const inHead = await runGit(["-C", repo.path, "cat-file", "-e", `HEAD:${p}`], {
+            cwd: repo.path,
+          });
+          if (inHead.exitCode === 0) {
+            last = await runGit(withPaths(["checkout", "--force"], [p]), {
+              cwd: repo.path,
+            });
+            if (last.exitCode !== 0) return last;
+            continue;
+          }
+          const checked = registry.child(id, p);
+          if (!checked.ok || !checked.path) {
+            return {
+              stdout: "",
+              stderr: "Path is not inside this repository.",
+              exitCode: 1,
+              command: "",
+            };
+          }
+          const resolvedRoot = await resolveRealpath(repo.path);
+          const resolvedChild = await resolveRealpath(checked.path);
+          if (!stillInside(resolvedRoot, resolvedChild)) {
+            return {
+              stdout: "",
+              stderr: "Path resolves outside the repository.",
+              exitCode: 1,
+              command: "",
+            };
+          }
+          await runGit(withPaths(["rm", "--cached", "--force", "--ignore-unmatch"], [p]), {
+            cwd: repo.path,
+          });
+          try {
+            await unlink(resolvedChild);
+          } catch {
+            // Already gone, which counts as success for a discard.
+          }
+          last = { stdout: "", stderr: "", exitCode: 0, command: `rm ${p}` };
+        }
+        return last;
+      }),
+    );
+    if (res.exitCode !== 0) {
+      return c.json(
+        { code: "git-error", title: res.stderr.trim() || "git failed" },
+        500,
+      );
+    }
+    return c.json({ ok: true, snapshotRef: snapshot.ref });
+  });
   // entries are written by `journaled` around each mutating call, and undo
   // itself is a new entry rather than an edit of an old one.
   app.get("/api/journal", async (c) => {

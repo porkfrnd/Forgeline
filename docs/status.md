@@ -51,8 +51,8 @@ Remaining slices for the two milestones:
 | M3.3 | Diff viewer: inline, split, file | done (inline) |
 | M3.4 | Commit composer, commit action, sanity-check card | done |
 | M3 | **Gate:** full verify, tag, push | done (`milestone-3`) |
-| M4.1 | Journal and app-data storage | 2 h |
-| M4.2 | Snapshots and the recovery kind per action | 2 h |
+| M4.1 | Journal and app-data storage | done (roots persist across restart) |
+| M4.2 | Snapshots and the recovery kind per action | done (journal, snapshots, discard wired in) |
 | M4.3 | Undo timeline, rescue mode, confirmation previews | 2.5 h |
 | M4 | **Gate:** full verify, tag, push | 0.5 h |
 | — | Final screenshot review and final report | 1 h |
@@ -155,18 +155,18 @@ Each gap: what is missing, the file, the planned fix, the test that will prove i
 
 ### Recovery (Milestone 4, recorded now so it is not forgotten)
 
-5. **Write-ahead journal, state token, snapshots, failure-injection tests: not started.** Planned fix: Milestone 4 implements the §4 contract verbatim against real fixtures. Prove: SIGKILL injection tests + Undo tests per action.
+5. **Journal and snapshots: built and proven. State token and failure-injection tests: not started.** `src/server/journal.ts` and `src/server/snapshots.ts` exist, with 19 unit tests (refs before/after against real git, no entry written on failure, index-only changes reporting identical HEAD refs, the snapshot including untracked files, the user's real index left untouched, restore after a destructive action, private refs absent from `git stash list`, and retention) plus 2 e2e. Still missing from the §4 contract verbatim: the state token, pending-entry recovery cards, and SIGKILL failure-injection tests. Fix: the remainder of Milestone 4. Prove: SIGKILL injection tests plus an Undo test per action.
 
 ### Git contracts (Milestone 2/3, recorded now)
 
 6. **`runGit` has no timeout or cancel; `--` before paths is not yet enforced at call sites.** File: `src/server/git/git.ts`, call sites in later milestones. Fix: add timeout (longer for network) + abort, and always pass `--` before paths from `registry.child` results. Prove: unit tests with a slow fake + hunk-fixture suite (CRLF, no-trailing-newline, rename, binary, mode, symlink, spaces/non-Latin names).
 7. **Single-writer queue per repo — done this slice.** `src/server/queue.ts`; every status read goes through it via `summarizeRepo`. Prove: concurrency unit tests in `src/server/queue.test.ts` (same-repo serialization, cross-repo concurrency, rejection does not poison the chain, per-caller results).
 8. **Commit messages must go via `git commit -F -` on stdin.** Fix: apply when the commit flow lands (Milestone 3). Prove: commit e2e.
-9. **Scan results are not cached to app-data yet.** `scanRepos` runs on demand per `POST /api/repos/scan`; the spec's cache of scan results in the OS app-data folder is not written. Fix: Milestone 3 or 4. Prove: unit test that a cached scan skips a second disk walk.
+9. **Scan results are not cached yet, though the app-data folder now exists.** `src/server/appdata.ts` resolves the OS-standard folder (`$FORGELINE_DATA_DIR`, else `$XDG_DATA_HOME` or `~/.local/share`, `~/Library/Application Support`, or `%APPDATA%`, each with `/forgeline` appended) and writes and reads JSON there best-effort; the journal and persisted roots already use it. `scanRepos` itself still runs on demand per `POST /api/repos/scan` and its results are not written to that folder. Fix: Milestone 4 or later. Prove: unit test that a cached scan skips a second disk walk.
 10. **The dashboard has no "Choose folders" flow.** The Sidebar still renders a static "Choose folders" button that calls nothing; roots reach the server only through `POST /api/repos/scan` (currently exercised by the test helper and the screenshot script). Fix: a real folder-picker surface that posts the picked roots. Prove: e2e that picking a root lists its repos.
 11. **`repoStatusFields` spawning three git processes per repo — done this slice.** The branch now comes from `parseStatusBranch` on the `status --porcelain=v2 --branch` header, so a normal refresh is two processes (`status` + `rev-list`) instead of three; only a detached HEAD still pays for `rev-parse --short` to name the commit. Prove: `parseStatusBranch` unit tests plus the unchanged fixture tests.
 12. **The polling fallback is implemented but never exercised.** `LiveWatcher.engageFallback` rebuilds every watcher with `usePolling: true` on a chokidar error, and the sidebar shows "Live updates are polling." — but no test forces a chokidar error, so that path is unproven. Fix: a unit test that injects an error into one watcher and asserts mode becomes `polling` and changes are still reported. Prove: that test.
-13. **Settings are not persisted anywhere.** Roots, notes, and the scan cache all live in memory for the life of the process, so a restart forgets them. The spec wants them in the OS app-data folder. Fix: Milestone 3 or 4. Prove: restart-persistence unit test.
+13. **Roots are persisted; notes and the scan cache still are not.** Roots survive a restart because `POST /api/repos/scan` and the test root helper write `{"roots": [...]}` to `<app-data>/settings.json`, and `startServer()` reads it back before serving the first request. Notes and the scan cache have no home yet. Fix: continue in Milestone 4 or later. Prove: a restart-persistence unit test that boots a server against a temp app-data folder, scans a root, restarts, and asserts the root still gates registration.
 
 ### Everything else (Update 1 §§7-9, deferred to their milestones)
 

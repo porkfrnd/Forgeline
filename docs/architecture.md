@@ -1,7 +1,7 @@
 # Architecture
 
 > Last updated: 2026-10-15
-> Describes commit: 27b169a (Milestone 2 slice 1) plus uncommitted slice-2 work
+> Describes commit: 9dcbfa8 (README refresh) plus the journal, app-data, and snapshot work that followed Milestone 3
 
 How the code fits together today, and where things will live as milestones land. Sections that describe not-yet-built modules say so explicitly.
 
@@ -24,23 +24,28 @@ forgeline/
     server/
       index.ts              createApp(...): security middleware, /api/* auth, health, SSE, static serving + SPA fallback; startServer() binds 127.0.0.1 and resolves bind errors
       git/
-        git.ts              the ONLY module that runs git. runGit(args,{cwd,env}) -> {stdout,stderr,exitCode,command}. LC_ALL=C, GIT_TERMINAL_PROMPT=0, GIT_EDITOR=true. spawn arg arrays only.
+        git.ts              the ONLY module that runs git. runGit(args,{cwd,env}) -> {stdout,stderr,exitCode,command}. LC_ALL=C, GIT_TERMINAL_PROMPT=0, GIT_EDITOR=true. spawn arg arrays only. readRefs() reads HEAD/branch/stash for a journal entry.
+        diff.ts             changed-file records, unified-diff parsing, readChangedFiles, readFileDiff
       queue.ts              per-repo single-writer queue. Every status read for a repo goes through it; different repos stay concurrent.
       repo-summary.ts       summarizeRepo/summarizeRepos: one dashboard row per repo, shared by GET /api/repos and POST /api/repos/scan. Never throws.
       registry.ts           opaque repo id -> discovered path, plus the inside-root check
       paths.ts              isInside, resolveRealpath, safeRepoChildPath, stillInside
+      appdata.ts            resolves the OS app-data folder and is the only module that writes JSON there
+      journal.ts            the action journal; journaled() wraps every mutating call
+      snapshots.ts          private snapshot refs and their restore
       scan/                 scan.ts: bounded repo discovery. pathExists() prunes vanished repos.
       live/
         watcher.ts          LiveWatcher: chokidar over .git/HEAD, .git/index, refs + packed-refs; debounced; 3s polling fallback
-      routes/               (Milestone 3+) status, commits, branches, stash, undo, auth, releases
+      routes/               (later milestones) status, commits, branches, stash, undo, auth, releases
       auth/                  (Milestone 6) provider interface, github, gitlab, keychain
       releases/              (Milestone 8) version bump, changelog, tagging
     web/
       main.tsx              React entry; mounts <ThemeProvider><App/></ThemeProvider>
-      src/app/App.tsx       layout shell: header, sidebar, tab bar (Changes/History/Branches/Releases), theme toggle
+      src/app/App.tsx       the Workbench shell: repo rail, toolbar, scan/file list/diff area, status bar
+      src/app/git.ts        the browser's API client for every repo action
       src/app/useRepos.ts   dashboard list driven by EventSource over /api/events, with a slow poll fallback
-      src/components/       Header, Sidebar (more in later milestones)
-      src/theme/            ThemeProvider (paper/midnight), tokens.css (design tokens + base styles)
+      src/components/       RepoRail, StatusBar, CommandPalette, AppearancePanel, FileList, DiffViewer, CommitComposer
+      src/theme/            ThemeProvider (7 families, dark/light, glass/solid, effects), families.ts, tokens.css
     shared/types.ts         RepoStatus, RepoSummary, Change, Commit, ForgeError, Snapshot (shared shapes)
   tests/e2e/                Playwright specs + global setup/teardown that run the real built CLI
 ```
@@ -66,9 +71,30 @@ Static serving: `GET *` first handles the `?t=` token exchange (303 + Set-Cookie
 
 ## Journal and snapshots (Milestone 4)
 
-- Location: the OS app-data folder for Forgeline, never inside a repo. Not chosen yet — candidates: `~/.config/forgeline`, `~/Library/Application Support/forgeline`, `%APPDATA%/forgeline`. The same module should also hold persisted settings and the scan cache (gaps 9 and 13 in `docs/status.md`), so they land together.
-- Journal: one entry per repo-changing action (repo path, timestamp, plain-English description, git command, refs before/after).
-- Snapshots: built from a temp index (`GIT_INDEX_FILE`, `git add -A`, `git write-tree`, `git commit-tree`), stored under `refs/forgeline/snapshots/<timestamp>`; the real index is also recorded with `git write-tree` when conflict-free. Prune only when older than 30 days and outside the latest 50. Recovery contracts (exact undo / compensating / irreversible) will be listed per action here.
+**Location.** The OS app-data folder, never inside a repo: `$FORGELINE_DATA_DIR` if set, else `$XDG_DATA_HOME` or `~/.local/share` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows, each with `/forgeline` appended. `src/server/appdata.ts` owns that resolution plus a best-effort JSON store (atomic write via a temp file and rename). A missing or corrupt file reads as absent, and a failed write is swallowed so a read-only home degrades to memory-only rather than stopping the app. The same folder holds persisted settings (gap 13) and, later, the scan cache (gap 9), so they land together.
+
+**Journal.** `src/server/journal.ts`. One entry per repo-changing action: repo path, ISO timestamp, a plain-English description, the exact git command, and refs before and after (HEAD, branch, stash presence). Entries are stored newest-first under a cap. `journaled()` is the only way a mutating action records itself: it reads refs, runs the action, reads refs again, and writes an entry only when the action succeeded — a failed `git add` has no business in an Undo timeline. Undoing is itself journaled as a new entry.
+
+**Snapshots.** `src/server/snapshots.ts`. Built from a temporary index so the user's real index is never touched while building: `GIT_INDEX_FILE=<tmp> git read-tree HEAD`, `git add -A`, `git write-tree`, `git commit-tree`. Ignored files are excluded, which is what `git add -A` means by default.
+
+Two private refs are written, and the second is not in the spec but follows from it. The spec asks for the real index to be recorded "so the staged state can be restored", and reading the worktree tree alone would restore every file but flatten the user's staged/unstaged distinction. So:
+
+- `refs/forgeline/snapshots/<timestamp>` — the working tree, including untracked files (`git read-tree --reset -u`)
+- `refs/forgeline/snapshots/<timestamp>.index` — the real index (`git read-tree`, no `-u`, so files are untouched)
+
+Both are private refs, so neither appears in `git stash list`; a snapshot visible in a stash list is a bug. Retention is exactly as the spec defines it: delete only when older than 30 days AND outside the latest 50.
+
+**Recovery contracts, per action.** Every destructive action is one of three kinds, recorded here:
+
+| Action | Kind | Why |
+| --- | --- | --- |
+| Stage / unstage (file or hunk) | exact undo | The reverse command returns the index and worktree to the recorded state. |
+| Commit | exact undo | `git reset --soft` to the recorded HEAD restores the tree, index, and HEAD; the commit object remains reachable. Recovery is proven for the no-remote case only. |
+| Discard local changes | exact undo | A snapshot is taken first, unconditionally, and its ref is returned in the response body so the timeline can restore the exact tree and staged state. |
+| Push / publish release (not built) | irreversible | It reached a remote, so it cannot be undone from here. The timeline will say so in one sentence and offer a compensating revert commit. |
+| Merge / rebase / reset (not built) | compensating or irreversible | To be classified once built, against real fixture repos. |
+
+No Undo is offered anywhere until its recovery test passes; until then an action is labelled "Cannot be undone" with the reason. Push and release entries are marked non-undoable at write time via `journaled`'s `undoable: false` option.
 
 ## Health score formula (Milestone 2)
 

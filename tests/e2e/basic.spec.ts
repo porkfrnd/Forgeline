@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serverInfo, mintToken, expireTokenForTest, sessionCookie, setRootsForTest, registerRepoForTest } from "./helpers.js";
@@ -719,6 +719,63 @@ test.describe("Milestone 4 journal", () => {
         encoding: "utf8",
       });
       expect(status.stdout.trim()).toBe("");
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("discarding changes takes a snapshot that still holds the discarded text", async ({
+    request,
+  }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { dir, id } = await makeCommitRepo(baseUrl, cookie);
+    try {
+      writeFileSync(join(dir, "doomed.txt"), "precious unsaved words\n");
+      const staged = await request.post(`${baseUrl}/api/repos/${id}/stage`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["doomed.txt"] },
+      });
+      expect(staged.status()).toBe(200);
+
+      const discarded = await request.post(`${baseUrl}/api/repos/${id}/discard`, {
+        headers: { cookie, "Content-Type": "application/json" },
+        data: { paths: ["doomed.txt"] },
+      });
+      expect(discarded.status()).toBe(200);
+      const body = (await discarded.json()) as { ok: boolean; snapshotRef?: string };
+      expect(body.ok).toBe(true);
+      expect(body.snapshotRef).toBeTruthy();
+
+      // The file is gone from the working tree — the discard really happened.
+      expect(existsSync(join(dir, "doomed.txt"))).toBe(false);
+
+      // But the snapshot ref the response handed back still contains the
+      // exact text, which is the whole point of snapshotting first.
+      const shown = spawnSync("git", ["cat-file", "-p", body.snapshotRef!], {
+        cwd: dir,
+        encoding: "utf8",
+      });
+      expect(shown.status).toBe(0);
+      const blob = spawnSync(
+        "git",
+        ["cat-file", "-p", `${body.snapshotRef}:doomed.txt`],
+        { cwd: dir, encoding: "utf8" },
+      );
+      expect(blob.stdout).toBe("precious unsaved words\n");
+
+      // And it is a private ref: it does not appear in the user's stash list.
+      const stash = spawnSync("git", ["stash", "list"], { cwd: dir, encoding: "utf8" });
+      expect(stash.stdout.trim()).toBe("");
+
+      // The discard is journaled, so the timeline can explain and offer it.
+      const journal = await request.get(`${baseUrl}/api/journal`, { headers: { cookie } });
+      const entries = (await journal.json()) as {
+        entries: Array<{ description: string }>;
+      };
+      expect(entries.entries.some((e) => e.description.includes("Discarded local changes"))).toBe(
+        true,
+      );
     } finally {
       rmSync(join(dir, ".."), { recursive: true, force: true });
     }

@@ -233,3 +233,42 @@ One dated entry per loop run. Never rewrite old entries. Newest entries go at th
 
 **Commit:** `aee647a` — `feat(m3.2): stage and unstage, including hunk toggling`; `06ad8a3` — `feat(m3.4): commit composer, commit action, sanity-check card`.
 **Push:** both to `main`; `git tag milestone-3` pushed as the gate.
+
+## M4.1 — journal and app-data storage (commit `7112d1f`)
+
+**Steps and results:**
+
+1. Work — `src/server/appdata.ts` resolves the OS-standard app-data folder and is the only module that writes JSON there; `src/server/journal.ts` holds the spec's entry shape and the `journaled()` wrapper that every mutating action now goes through. Three private concerns were settled while building them:
+   - **The folder resolves once and caches.** A test that changes `$XDG_DATA_HOME` after the first call would otherwise silently keep the old answer, so the cache has its own reset and `$FORGELINE_DATA_DIR` is read inside `appDataDir()`, not at module load.
+   - **A missing file and a corrupt file look the same.** Both read as absent. A half-written journal from a killed process must not break the timeline.
+   - **Writes never throw.** A read-only home degrades to memory-only. The journal is a safety feature; it must not be able to take the app down.
+2. Static check — `typecheck` clean. One real catch: `journal.ts` imported `appDataFile` it never used, which `tsc` flagged under `noUnusedLocals`. Also found and fixed an infinite recursion I had written by reflex (`return cachedDir();`) — TypeScript accepted it because `cachedDir` is `string | null` and calling a `string` is a type error only at runtime; it would have hung the process on the first read.
+3. Unit test — `vitest run`: 91 passed (up from 72). 19 new tests, run against real git in throwaway repos: refs before/after, no entry on a failed action, an index-only change honestly reporting identical HEAD refs, a non-undoable entry carrying its reason, and the journal never landing inside a repo.
+4. Browser test — `playwright test`: 54 passed (up from 52). Two new tests, one per viewport.
+5. Out-of-band proof for gap 13 — with the server killed and restarted against the same data dir, registering a repo inside the previously scanned root succeeded *without scanning again*, and a path outside it was still refused. That is the restart persistence the gap asked for, proven rather than asserted.
+6. Record and commit — see below.
+
+**Two test bugs worth recording, because they were both mine and neither was in the code.** The first test wrote app-data to `/proc/definitely/not/writable` and timed out at 60s: nothing about that path fails fast, it just hangs. The reliable way to prove best-effort storage is a path that fails *immediately* — a file name that is already a directory, so the write gets `EISDIR`. The second test tried to make `git commit` fail by unstaging a file, then asserted a non-zero exit; `git rm --cached a.txt` had left a staged *deletion*, so the commit succeeded. The honest way to force a failure is `git add -- no/such/file.txt`, which fails every time without depending on what the index holds.
+
+**Commit:** `7112d1f` — `feat(m4.1): app-data storage and the action journal`.
+
+## M4.2 — snapshots and the recovery kind per action
+
+**Steps and results:**
+
+1. Work — `src/server/snapshots.ts` builds a snapshot from a temporary index so the user's real index is never touched while one is being made, and `POST /api/repos/:id/discard` is the first risky action, taking a snapshot before it throws anything away and returning the ref in its response body.
+2. The spec asked for the real index to be recorded "so the staged state can be restored", but reading the worktree tree back restores every file *and flattens the staged/unstaged distinction*. So two private refs are written: `refs/forgeline/snapshots/<ts>` for the working tree (`read-tree --reset -u`) and `refs/forgeline/snapshots/<ts>.index` for the index alone (`read-tree`, no `-u`). Neither appears in `git stash list`, which is the whole point of a private ref.
+3. Static check — `typecheck` clean after removing two pieces of my own scaffolding: a `refFor()` helper that was a convoluted no-op, and four `for-each-ref` format fields nobody read.
+4. Unit test — `vitest run`: 99 passed (up from 91). 8 new tests. Two failed first, both of them my test's fault rather than the code's, and one of them interesting:
+   - **The trailing-newline trap.** A restored tree SHA compared against a captured tree SHA and they printed identically but differed, because `git write-tree` emits a newline and I had trimmed one side. Fixed in the test helper, which now trims for everyone.
+   - **Wrong prune arithmetic.** I asserted 51 deletions from 52 refs and got 2. The code was right: newest 50 are kept, so only the 2 oldest of the ancient ones go. My test had quietly assumed all 51 would go, which is the opposite of the "latest 50" rule it was supposed to be proving.
+5. Browser test — `playwright test`: 56 passed (up from 54). Two new tests.
+6. **The discard bug that only a real run found.** The endpoint's git call was `runGit(withPaths(["checkout","--force","--"], paths))`. It returned 500 on the first e2e run, and the git error was `error: pathspec '--' did not match any file(s) known to git`. Two separate mistakes stacked:
+   - `withPaths` already appends the `--` separator, so passing my own made two and git read the first as a pathspec.
+   - Even with that fixed, one `checkout --force` covering *all* paths fails outright when any single path is untracked — which would silently leave the tracked ones dirty. It has to be per-path.
+   - And a third, found by running the logic by hand rather than trusting the test: `git checkout --force` on a **newly added** file is a no-op, because there is no committed version to restore. Discard has to drop it from the index and delete it. Verified all three cases (modified tracked, new staged, new untracked) leave the worktree clean.
+7. Record and commit — see below.
+
+**Recovery contracts are now recorded per action** in `docs/architecture.md`: stage/unstage and commit are exact undo; discard is exact undo via the ref it returns; push and release are irreversible and will say so in one sentence. Merge, rebase, and reset are unclassified until built and tested against real fixtures.
+
+**Tests (e2e):** a commit is journaled with its command and its refs, and the repo stays clean afterwards; discarding changes takes a snapshot that still contains the exact discarded text, is absent from `git stash list`, and is named in the journal.
