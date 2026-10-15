@@ -341,8 +341,14 @@ const RULES: ErrorRule[] = [
   {
     // Verified: "remote: 403 Unauthorized" then "The requested URL returned
     // error: 403".
+    //
+    // Two wordings and nothing looser. The obvious-looking third pattern,
+    // "some 403 appears after some http", is a trap: a port number is digits,
+    // and `http://127.0.0.1:40387` really does contain "403". That turned a
+    // transient 401 into a permissions explanation and cost an afternoon, so
+    // the rule now matches what git actually prints and nothing else.
     matches: (output) =>
-      has(output, "returned error: 403") || has(output, "remote: 403") || has(output, "http", "403"),
+      has(output, "returned error: 403") || has(output, "remote: 403"),
     build: (ctx) => ({
       code: "remote-auth",
       title: "The remote refused you.",
@@ -369,7 +375,17 @@ const RULES: ErrorRule[] = [
     }),
   },
   {
-    matches: (output) => has(output, "authentication failed") || has(output, "unable to access", "http"),
+    // "unable to access" alone proves nothing: git prints it for a host that
+    // doesn't resolve exactly as it prints it for a host that refuses a
+    // credential. So the wordings that mean a credential *specifically* are
+    // matched here, and the arm-wavier wording is left for the network rule
+    // below — which is the safer of the two to get wrong, since "can't reach
+    // the remote" is true of a refused credential too, while "you aren't
+    // authorised" is not true of a typo'd hostname.
+    matches: (output) =>
+      has(output, "authentication failed") ||
+      has(output, "could not read username") ||
+      has(output, "terminal prompts disabled"),
     build: (ctx) => ({
       code: "remote-auth",
       title: "The remote needs you to sign in.",
@@ -407,8 +423,25 @@ const RULES: ErrorRule[] = [
   },
   {
     // Verified: "Could not resolve host: no-such-host-anywhere.invalid".
+    //
+    // This sits before the credential rule on purpose. A hostname that doesn't
+    // resolve and a host that refuses a credential both print "unable to
+    // access", and only one of them is about an account. Getting this order
+    // backwards told a user with a typo to set up sign-in.
     matches: (output) =>
-      anyHas(output, "could not resolve host", "connection refused", "network is unreachable", "operation timed out"),
+      anyHas(
+        output,
+        "could not resolve host",
+        "connection refused",
+        "network is unreachable",
+        "operation timed out",
+        // git's own wording for a host it can't even reach the port on.
+        "unable to access",
+      ) &&
+      // ...but only when nothing suggests the other side answered. A refusal
+      // comes with a status code or a prompt, and those belong to the
+      // credential rules above.
+      !anyHas(output, "returned error:", "authentication failed", "terminal prompts disabled"),
     build: (ctx) => ({
       code: "remote-unreachable",
       title: `Can't reach the remote${ctx.host !== null ? ` (${ctx.host})` : ""}.`,

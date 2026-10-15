@@ -26,6 +26,17 @@ import {
   pullRepo,
   pushRepo,
 } from "./git/remote.js";
+import {
+  branchExists,
+  createBranch,
+  currentBranch,
+  deleteBranch,
+  forceDeleteBranch,
+  listBranches,
+  renameBranch,
+  switchBranch,
+  trackRemoteBranch,
+} from "./git/branches.js";
 import { resolveRealpath, stillInside } from "./paths.js";
 import { readJson, writeJson } from "./appdata.js";
 import { readJournal } from "./journal.js";
@@ -1032,6 +1043,152 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
         ? null
         : "You are signed out of Forgeline. GitHub still lists this app under your authorised OAuth apps, where you can revoke it if you want to.",
     });
+  });
+
+  /* --------------------------------------------------------------- *
+   * Branches (Milestone 7).
+   * --------------------------------------------------------------- */
+
+  app.get("/api/repos/:id/branches", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const branches = await listBranches(repo.path);
+    return c.json({
+      branches,
+      detached: (await currentBranch(repo.path)) === null,
+    });
+  });
+
+  /**
+   * Switch to a branch. A snapshot is taken first, because a switch changes the
+   * working tree and that is exactly what undo restores.
+   */
+  app.post("/api/repos/:id/branches/switch", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ name?: unknown }>();
+    if (typeof body.name !== "string" || body.name.length === 0) {
+      return c.json({ code: "bad-request", title: "Which branch?" }, 400);
+    }
+    const snapshot = await takeSnapshot(repo.path);
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        `Switched to ${body.name}`,
+        () => switchBranch(repo.path, body.name as string),
+        { undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref } },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    // Deleting the local copy of a remote branch is a lossy action, so the
+    // snapshot stays referenced even though restoring it puts the branch back.
+    return c.json({ ok: true, nowOn: result.nowOn, snapshot: snapshot.ref });
+  });
+
+  /** Create a branch from the current HEAD (or a named starting point). */
+  app.post("/api/repos/:id/branches/create", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ name?: unknown; from?: unknown }>();
+    if (typeof body.name !== "string" || body.name.length === 0) {
+      return c.json({ code: "bad-request", title: "A name is needed for the branch." }, 400);
+    }
+    const from = typeof body.from === "string" ? body.from : undefined;
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        from === undefined ? `Created branch ${body.name}` : `Created branch ${body.name} from ${from}`,
+        () => createBranch(repo.path, body.name as string, from),
+        { undoable: false, notUndoableReason: "Deleting the branch this created would undo it." },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, nowOn: result.nowOn });
+  });
+
+  /** Turn `origin/thing` into a local branch that tracks it. */
+  app.post("/api/repos/:id/branches/track", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ name?: unknown }>();
+    if (typeof body.name !== "string" || body.name.length === 0) {
+      return c.json({ code: "bad-request", title: "Which branch?" }, 400);
+    }
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        `Started tracking origin/${body.name} as a local branch`,
+        () => trackRemoteBranch(repo.path, body.name as string),
+        { undoable: false, notUndoableReason: "Deleting the local branch this created would undo it." },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, nowOn: result.nowOn });
+  });
+
+  /** Delete a branch. `force` is explicit: a branch with work nothing else has
+   *  is not deleted by accident. */
+  app.post("/api/repos/:id/branches/delete", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ name?: unknown; force?: unknown }>();
+    if (typeof body.name !== "string" || body.name.length === 0) {
+      return c.json({ code: "bad-request", title: "Which branch?" }, 400);
+    }
+    const force = body.force === true;
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        `Deleted branch ${body.name}`,
+        () => (force ? forceDeleteBranch(repo.path, body.name as string) : deleteBranch(repo.path, body.name as string)),
+        {
+          // A deleted branch is gone: undoing it means restoring a ref, which a
+          // snapshot cannot do. So the entry is honest about being unusable.
+          undoable: false,
+          notUndoableReason:
+            "Deleting a branch is not something this app can undo — the branch's commits are only recoverable from the reflog after the fact, and Forgeline will not go rummaging in it.",
+        },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/repos/:id/branches/rename", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ name?: unknown }>();
+    if (typeof body.name !== "string" || body.name.length === 0) {
+      return c.json({ code: "bad-request", title: "A name is needed for the branch." }, 400);
+    }
+    const result = await queue.run(repo.path, () =>
+      journaled(repo.path, `Renamed the current branch to ${body.name}`, () =>
+        renameBranch(repo.path, body.name as string),
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, nowOn: result.nowOn });
+  });
+
+  app.get("/api/repos/:id/branches/:name/exists", async (c) => {
+    const id = c.req.param("id");
+    const name = c.req.param("name");
+    if (!id || name === undefined) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    return c.json({ exists: await branchExists(repo.path, name) });
   });
 
   /* --------------------------------------------------------------- *

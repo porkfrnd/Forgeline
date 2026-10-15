@@ -520,3 +520,81 @@ export async function signOut(): Promise<{ ok: true; note?: string } | ActionErr
   if (isActionError(outcome)) return outcome;
   return outcome as { ok: true; note?: string };
 }
+
+/** A branch, as the interface shows it. `name` never carries a `refs/heads/`
+ *  prefix — the server strips it, because the alternative is a rail full of
+ *  internals. */
+export interface BranchInfo {
+  name: string;
+  current: boolean;
+  remote: boolean;
+  upstream: string | null;
+  counts: { ahead: number; behind: number } | null;
+  hasUnmergedWork: boolean;
+}
+
+export interface BranchList {
+  branches: BranchInfo[];
+  /** True when HEAD points at a commit rather than a branch, which is a state
+   *  worth naming rather than showing an empty branch field. */
+  detached: boolean;
+}
+
+export async function listBranches(repoId: string): Promise<BranchList> {
+  const res = await fetch(`/api/repos/${encodeURIComponent(repoId)}/branches`);
+  const parsed = (await res.json().catch(() => ({}))) as Partial<BranchList>;
+  return { branches: parsed.branches ?? [], detached: parsed.detached === true };
+}
+
+/**
+ * Any branch action. These all return the branch that is current afterwards,
+ * which is what the interface has to re-render from.
+ */
+async function branchCall(
+  repoId: string,
+  action: string,
+  body: Record<string, unknown>,
+): Promise<{ ok: true; nowOn?: string | null } | ActionError> {
+  const outcome = await actionJson(`/api/repos/${encodeURIComponent(repoId)}/branches/${action}`, body);
+  return outcome as { ok: true; nowOn?: string | null } | ActionError;
+}
+
+export async function switchBranch(
+  repoId: string,
+  name: string,
+): Promise<{ ok: true; nowOn?: string | null } | ActionError> {
+  return branchCall(repoId, "switch", { name });
+}
+
+/** Turn `origin/thing` into a local branch that tracks it. */
+export async function trackBranch(
+  repoId: string,
+  name: string,
+): Promise<{ ok: true; nowOn?: string | null } | ActionError> {
+  return branchCall(repoId, "track", { name });
+}
+
+export async function createBranch(
+  repoId: string,
+  name: string,
+  from?: string,
+): Promise<{ ok: true; nowOn?: string | null } | ActionError> {
+  return branchCall(repoId, "create", from === undefined ? { name } : { name, from });
+}
+
+/** `force` is never defaulted to true: a branch with work nothing else has is
+ *  not deleted by accident. */
+export async function deleteBranch(
+  repoId: string,
+  name: string,
+  force = false,
+): Promise<{ ok: true } | ActionError> {
+  return branchCall(repoId, "delete", { name, force }) as Promise<{ ok: true } | ActionError>;
+}
+
+export async function renameBranch(
+  repoId: string,
+  name: string,
+): Promise<{ ok: true; nowOn?: string | null } | ActionError> {
+  return branchCall(repoId, "rename", { name });
+}

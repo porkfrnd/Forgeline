@@ -334,3 +334,15 @@ One dated entry per loop run. Never rewrite old entries. Newest entries go at th
 5. The prompt is lazy in the tested sense. `AUTH_FAILURE_CODES` is a set of codes **the translator actually emits** — `remote-auth`, `ssh-key`, `host-key` — and listing a code git never produces would be a prompt that never appears. A push refused for want of a credential opens it on its own; a `no-upstream` push does not, because an account would not have helped there.
 
 **Two things the first attempt got wrong, both caught by tests.** The e2e fetch to `/api/auth` went out without a session cookie and parsed the app's own HTML as JSON, which looked exactly like "not signed in" and proved nothing. And the auth-failure test pushed an unpublished branch, so git refused with `no-upstream` before it ever opened a connection — the 401 was never reached. Pointing the branch at the remote fixed it, and the prompt then appeared on its own.
+
+## M7.1 — branches, and a translator bug that a port number found
+
+**Steps and results:**
+
+1. `src/server/git/branches.ts` does list, create, switch, adopt-a-remote, delete, and rename. It uses `git switch`, not `git checkout`, because a branch called `feature` and a path called `feature` are both legal and only `switch` refuses to guess. Delete is two functions rather than one flag, so the unmerged case has to be asked for rather than defaulted.
+2. `currentBranch` is exported because every question about the result of switching is really "which branch am I on now", and `symbolic-ref` is the only honest way to get it. `git branch --show-current` prints an empty line when detached, which reads like a branch with no name.
+3. 13 unit tests and 4 e2e tests, all real repositories on disk, and every branch state assertion answered by git rather than by the API's own reply.
+
+**A bug worth recording, because it was found by a test and would not have been found by reading.** The M6 sign-in e2e passed and then failed, and the card had changed from "the remote needs you to sign in" to "the remote refused you — permissions problem". Nothing in the sign-in code had changed. The cause: `has(output, "http", "403")` was matching the *port number*. The local fixture was on `http://127.0.0.1:40387`, which really does contain "403", so a 401 was translated as a permissions problem. It had been passing before because the fixture had a different port.
+
+Fixing it exposed a second instance of the same class of mistake: the rule matching `"unable to access"` plus `"http"` claimed *every* unreachable remote was a credentials problem, so a hostname that didn't resolve told the user to set up sign-in. `git` prints "unable to access" identically for a typo and for a refusal, so that wording cannot separate them. Both rules now match only what a credential refusal actually prints — `authentication failed`, `could not read username`, `terminal prompts disabled` — and the network rule takes the rest. Wrong-but-plausible cards are worse than vague ones, because a user acts on them.

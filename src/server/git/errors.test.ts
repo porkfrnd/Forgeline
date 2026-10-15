@@ -398,4 +398,34 @@ describe("translateError's host and file extraction", () => {
     // No stray parentheses or the word "null".
     expect(card.title).not.toContain("null");
   });
+  it("does not read a port number as an HTTP status", () => {
+    // A local remote on port 40387 really does contain "403" once the URL is
+    // printed. The 403 rule used to match "http" followed by "403", which
+    // turned a 401 into "permissions problem" — wrong, and it hid the actual
+    // question, which was credentials. Digits in a host must never move a
+    // card between codes.
+    const withForbiddenPort = translateError(
+      "fatal: could not read Username for 'http://127.0.0.1:40387/repo.git': terminal prompts disabled",
+      "",
+    );
+    expect(withForbiddenPort.code).toBe("remote-auth");
+    expect(withForbiddenPort.title).toBe("The remote needs you to sign in.");
+
+    // The same trap with the other two numbers that appear in rejections.
+    const withNotFoundPort = translateError(
+      "fatal: unable to access 'http://127.0.0.1:4041/x.git/': Could not resolve host",
+      "",
+    );
+    expect(withNotFoundPort.title).toContain("Can't reach the remote");
+  });
+
+  it("reads a real 403 as a permissions problem", () => {
+    // The genuine wording, so the rule still earns its keep.
+    const card = translateError(
+      "remote: 403 Unauthorized\nfatal: unable to access 'https://github.com/o/r/': The requested URL returned error: 403",
+      "",
+    );
+    expect(card.code).toBe("remote-auth");
+    expect(card.title).toBe("The remote refused you.");
+  });
 });

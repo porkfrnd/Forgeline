@@ -14,6 +14,7 @@ import { UndoTimeline } from "../components/UndoTimeline";
 import { ErrorCard } from "../components/ErrorCard";
 import { RemoteBar } from "../components/RemoteBar";
 import SignInPrompt from "../components/SignInPrompt";
+import { BranchPanel } from "../components/BranchPanel";
 import { History } from "lucide-react";
 import {
   abortMerge,
@@ -55,6 +56,11 @@ export function App() {
   // is what makes the prompt open by itself, and not being signed in is still
   // a perfectly normal state to launch in, with no badge saying otherwise.
   const [signIn, setSignIn] = useState<{ authFailure: boolean } | null>(null);
+  // The branch panel, opened from the branch indicator. It is the only control
+  // that draws something other than the workbench, so it is state on its own.
+  const [branchPanelOpen, setBranchPanelOpen] = useState(false);
+  /** A one-line note shown by a panel that wants to confirm what it just did. */
+  const [note, setNote] = useState<string | null>(null);
   /** What the running-git check found, so the remove-lock fix can say why. */
   const [gitCheck, setGitCheck] = useState<{ running: string[]; title: string } | null>(null);
   const [identityName, setIdentityName] = useState("");
@@ -320,7 +326,16 @@ export function App() {
 
       <header className="toolbar">
         <GitBranch size={16} strokeWidth={1.5} aria-hidden="true" />
-        <strong>Forgeline</strong>
+        <button
+          type="button"
+          className="button brand-branch"
+          aria-expanded={branchPanelOpen}
+          onClick={() => setBranchPanelOpen((v) => !v)}
+          disabled={selectedId === null}
+          title={selectedId === null ? "Open a repository to switch branches" : "Branches"}
+        >
+          <strong>Forgeline</strong>
+        </button>
         <span className="spacer" />
         <button
           type="button"
@@ -469,6 +484,18 @@ export function App() {
             onClose={() => setSignIn(null)}
           />
         ) : null}
+
+        {branchPanelOpen && selectedId !== null ? (
+          <BranchPanel
+            repoId={selectedId}
+            onChanged={() => void refreshChanges()}
+            onError={reportError}
+            onNote={setNote}
+            onClose={() => { setBranchPanelOpen(false); setNote(null); }}
+          />
+        ) : null}
+
+        {note !== null ? <p className="message muted work-note">{note}</p> : null}
 
         <section className="panel worktable" data-ticks>
           {selectedId === null ? (

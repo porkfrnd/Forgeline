@@ -1649,3 +1649,133 @@ test.describe("Milestone 6 sign-in", () => {
     }
   });
 });
+
+/**
+ * Milestone 7: branches.
+ *
+ * The same shape as the remote tests: real git, real repositories, and every
+ * assertion about branch state answered by git itself rather than by trusting
+ * what the API said.
+ */
+test.describe("Milestone 7 branches", () => {
+  /** A repository with one commit, a pushed branch, and a second branch made
+   *  locally so there is something to switch away from. */
+  async function makeBranchRepo(baseUrl: string, cookie: string, name: string) {
+    const root = mkdtempSync(join(tmpdir(), `fl-e2e-branch-${name}-`));
+    const remote = join(root, "remote.git");
+    mkdirSync(remote, { recursive: true });
+    spawnSync("git", ["init", "-q", "--bare", "-b", "main", "."], { cwd: remote, encoding: "utf8" });
+    const dir = join(root, "demo");
+    const clone = spawnSync("git", ["clone", "-q", remote, dir], { cwd: root, encoding: "utf8" });
+    if (clone.status !== 0) throw new Error(`clone failed: ${clone.stderr}`);
+    writeFileSync(join(dir, "a.txt"), "base\n");
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["switch", "-q", "-c", "main"], { cwd: dir });
+    spawnSync("git", ["-c", "user.email=f@i", "-c", "user.name=F", "commit", "-qm", "base"], { cwd: dir });
+    spawnSync("git", ["push", "-q", "-u", "origin", "main"], { cwd: dir });
+    spawnSync("git", ["branch", "feature"], { cwd: dir });
+    await setRootsForTest(baseUrl, [root]);
+    const id = await registerRepoForTest(baseUrl, cookie, dir);
+    return { root, remote, dir, id };
+  }
+
+  const branchOf = (dir: string): string =>
+    spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+
+  test("the panel lists local branches and only one is current", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root } = await makeBranchRepo(baseUrl, cookie, "list");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".brand-branch").click();
+      const panel = page.locator(".branch-panel");
+      await expect(panel).toBeVisible();
+
+      const rows = panel.locator(".branch-row");
+      await expect(rows).toHaveCount(3);
+      // Names, not refnames — `refs/heads/main` in a rail full of branches
+      // would be internals the user should never have to read.
+      await expect(panel).toContainText("main");
+      await expect(panel).toContainText("feature");
+      await expect(panel).not.toContainText("refs/heads/");
+      // The current branch is marked, and only one branch is.
+      await expect(panel.locator(".branch-row.is-current")).toHaveCount(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("choosing a branch switches the repository, confirmed by git", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeBranchRepo(baseUrl, cookie, "switch");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".brand-branch").click();
+      await page
+        .locator(".branch-panel .branch-name", { hasText: "feature" })
+        .click();
+      await page.waitForTimeout(1500);
+
+      // git is asked, not the API's own answer.
+      expect(branchOf(dir)).toBe("feature");
+      await expect(page.locator(".branch-panel .branch-row.is-current")).toContainText("feature");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("creating a branch through the form really creates it", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeBranchRepo(baseUrl, cookie, "create");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".brand-branch").click();
+      await page.fill("#branch-name", "made-in-the-ui");
+      await page.locator(".branch-create button[type=submit]").click();
+      await page.waitForTimeout(1500);
+
+      const refs = spawnSync("git", ["branch", "--format=%(refname:short)"], {
+        cwd: dir,
+        encoding: "utf8",
+      });
+      expect(refs.stdout.split("\n")).toContain("made-in-the-ui");
+      // And it was created and switched to, which is the whole point of the
+      // one-step `git switch -c`.
+      expect(branchOf(dir)).toBe("made-in-the-ui");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("deleting a branch needs confirming, and the confirm is a real force", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeBranchRepo(baseUrl, cookie, "delete");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".brand-branch").click();
+
+      const featureRow = page.locator(".branch-row", { hasText: "feature" });
+      await featureRow.getByRole("button", { name: "Delete" }).click();
+      // Nothing deleted yet: it asks first, in place, because the branch has
+      // commits nothing else has and deleting it silently is catastrophic.
+      const refsBefore = spawnSync("git", ["branch", "--format=%(refname:short)"], { cwd: dir, encoding: "utf8" });
+      expect(refsBefore.stdout.split("\n")).toContain("feature");
+      await expect(featureRow.getByRole("button", { name: "Keep" })).toBeVisible();
+
+      await featureRow.getByRole("button", { name: "Delete anyway" }).click();
+      await page.waitForTimeout(1500);
+      const refs = spawnSync("git", ["branch", "--format=%(refname:short)"], { cwd: dir, encoding: "utf8" });
+      expect(refs.stdout.split("\n")).not.toContain("feature");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

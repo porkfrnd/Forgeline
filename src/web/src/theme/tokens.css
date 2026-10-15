@@ -760,3 +760,115 @@ body {
   border-radius: 50%;
   border: 1px solid var(--border-subtle);
 }
+
+/* ---------- branch panel (Milestone 7) ---------- */
+.branch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.branch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.branch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.branch-row.is-current .branch-name {
+  font-weight: 600;
+}
+
+.branch-name {
+  background: none;
+  border: none;
+  padding: var(--space-1) 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.branch-name:disabled {
+  cursor: default;
+}
+
+.branch-name.is-remote {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.branch-counts {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.branch-flag {
+  font-size: var(--font-size-xs);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+}
+
+.branch-delete {
+  background: none;
+  border: none;
+  padding: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.branch-delete:hover:not(:disabled) {
+  color: var(--status-conflict);
+}
+
+.branch-panel .button {
+  flex: 0 0 auto;
+}
+
+.branch-panel form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.branch-panel label {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.branch-panel .input {
+  min-width: 10rem;
+}
+
+/* The brand mark doubles as the branch switcher: one control, one job. */
+.brand-branch {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--font-size-sm);
+}
+
+.brand-branch:disabled {
+  cursor: default;
+}
+
+.work-note {
+  flex-basis: 100%;
+}
