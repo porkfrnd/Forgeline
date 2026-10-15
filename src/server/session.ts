@@ -22,6 +22,10 @@ export interface AuthManager {
   /** Always mint a fresh bootstrap token regardless of active sessions.
    *  Reachable only through the test-guarded endpoint; never in production. */
   forceBootstrap(): string;
+  /** Backdate the current bootstrap token's mint time by the given
+   *  milliseconds, so tests can push it past expiry without waiting.
+   *  Reachable only through the test-guarded endpoint; never in production. */
+  expireBootstrapForTest(ageMs: number): void;
 }
 
 function newToken(): string {
@@ -110,6 +114,10 @@ export function createAuth(now: () => number = Date.now): AuthManager {
       bootstrapMint = now();
       consumed = false;
       return bootstrap;
+    },
+
+    expireBootstrapForTest(ageMs: number): void {
+      bootstrapMint = now() - ageMs;
     },
   };
 }

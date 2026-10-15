@@ -30,6 +30,13 @@ describe("bootstrap token exchange", () => {
     expect(auth.consumeBootstrap(token)).toBeNull();
   });
 
+  it("expireBootstrapForTest backdates the token past expiry", () => {
+    const auth = createAuth();
+    const token = auth.currentBootstrapToken();
+    auth.expireBootstrapForTest(BOOTSTRAP_TTL_MS + 1);
+    expect(auth.consumeBootstrap(token)).toBeNull();
+  });
+
   it("drops a session that has been idle too long", () => {
     let now = 1_000_000;
     const auth = createAuth(() => now);

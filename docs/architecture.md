@@ -45,13 +45,14 @@ forgeline/
 4. A route module calls into `src/server/git/git.ts` (the only place that spawns git), which returns `{stdout, stderr, exitCode, command}` and never throws. Parsers (Milestone 2) turn stable, machine-readable git output into typed data. On failure, routes return a `ForgeError` (`{code,title,explanation,fixes,raw}`) rather than a bare string.
 5. Live updates flow back over the SSE stream at `/api/events`. Today it is authenticated and emits an initial comment; real repo-status events arrive in Milestone 2.
 
-Static serving: `GET *` first handles the `?t=` token exchange (302 + Set-Cookie, token stripped). Otherwise it serves the matching file from `dist/web`, then falls back to `index.html` for client-side routes (except missing `/assets/*`, which 404). The web root is resolved relative to the compiled server: `join(dirname(index.js), "..", "web")`.
+Static serving: `GET *` first handles the `?t=` token exchange (303 + Set-Cookie, token stripped). Otherwise it serves the matching file from `dist/web`, then falls back to `index.html` for client-side routes (except missing `/assets/*`, which 404). The web root is resolved relative to the compiled server: `join(dirname(index.js), "..", "web")`.
 
 ## Git execution rules (from the spec, applied in git.ts)
 
 - One module runs git; `spawn` with argument arrays only; no shell strings.
 - Fixed env on every call: `LC_ALL=C`, `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`. Background status calls also set `GIT_OPTIONAL_LOCKS=0` (Milestone 2).
 - One write at a time per repo via a per-repo queue (Milestone 2/4). Reads may run in parallel.
+- Check-then-resolve is not a sandbox. The browser never sends raw paths — only opaque repo IDs plus repo-relative strings validated by `safeRepoChildPath` (rejects `..`, absolute paths, and leading `-`), then re-resolved with `resolveRealpath` and re-checked with `stillInside` immediately before git runs. This guards against a mistaken click, a crafted link, or an adversarial filename being turned into an out-of-root or option-shaped git argument — not against a hostile local user, who can already read the files, swap a symlink between the two checks, or run git directly. Rejections answer 400/403 with a plain explanation.
 
 ## Journal and snapshots (Milestone 4)
 

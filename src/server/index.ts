@@ -1,5 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
-import { dirname, extname, join } from "node:path";
+import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
 import { Hono } from "hono";
@@ -7,6 +7,11 @@ import { serve } from "@hono/node-server";
 import { createAuth, parseCookie, type AuthManager } from "./session.js";
 import { RepoRegistry } from "./registry.js";
 import { resolveRealpath, stillInside } from "./paths.js";
+
+/** Largest repo file the preview route will serve (1 MiB). Milestone 3
+ *  keeps a fuller contract with truncation + binary detection; for now the
+ *  route proves registry.child + re-resolution over HTTP and nothing more. */
+export const MAX_FILE_PREVIEW_BYTES = 1024 * 1024;
 
 export interface ServerHandle {
   app: Hono;
@@ -49,15 +54,31 @@ function webRoot(): string {
 }
 
 async function serveStaticFile(root: string, pathname: string): Promise<Response | null> {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(pathname);
-  } catch {
-    return null;
+  // Resolve-then-compare: decode repeatedly (one pass is not enough — an
+  // attacker can double-encode `%` itself), normalize, then demand the
+  // result still sits inside the web root. Nothing is stripped or rewritten;
+  // a path that leaves the root is rejected outright. Symlinks are resolved
+  // with realpath before the final comparison so a linked file outside the
+  // root cannot be served either. This is a guard, not a sandbox: a hostile
+  // local user with write access to dist/web can already change what is
+  // served (see docs/architecture.md).
+  const resolvedRoot = await resolveRealpath(root);
+  let decoded = pathname;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      return null;
+    }
   }
-  const safe = decoded.replace(/^[/\\]+/, "").replace(/\.\./g, "");
-  const full = join(root, safe);
-  if (!full.startsWith(root)) return null;
+  if (decoded.includes("\0")) return null;
+  const stripped = decoded.replace(/^[/\\]+/, "");
+  const candidate = normalize(join(resolvedRoot, stripped));
+  if (candidate !== resolvedRoot && !candidate.startsWith(resolvedRoot + sep)) return null;
+  const full = await resolveRealpath(candidate);
+  if (full !== resolvedRoot && !full.startsWith(resolvedRoot + sep)) return null;
   try {
     const info = await stat(full);
     if (!info.isFile()) return null;
@@ -119,7 +140,9 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
 
   app.use("/api/*", async (c, next) => {
     const id = parseCookie(c.req.header("cookie"), "session");
-    if (c.req.path !== "/api/__test__/bootstrap" && (id === null || !auth.validateSession(id))) {
+    // The __test__ helpers are guarded by FORGELINE_E2E=1 at each route and
+    // must work before any session exists (mint, then expire, then exchange).
+    if (!c.req.path.startsWith("/api/__test__/") && (id === null || !auth.validateSession(id))) {
       return c.text("Unauthorized", 401);
     }
     await next();
@@ -135,6 +158,52 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       return c.text("Not found", 404);
     }
     return c.json({ token: auth.forceBootstrap() });
+  });
+
+  // Test-only helper: set the registry roots for the e2e server so the
+  // register-repo helper can prove inside-vs-outside-root checks over HTTP.
+  // Guarded by FORGELINE_E2E=1 like the other __test__ helpers.
+  app.post("/api/__test__/roots", async (c) => {
+    if (process.env.FORGELINE_E2E !== "1") {
+      return c.text("Not found", 404);
+    }
+    const body = await c.req.json<{ paths?: unknown }>();
+    if (!Array.isArray(body.paths) || !body.paths.every((p) => typeof p === "string")) {
+      return c.json({ code: "bad-request", title: "Missing paths." }, 400);
+    }
+    registry.setRoots(body.paths as string[]);
+    return c.json({ ok: true });
+  });
+
+  // Test-only helper: register a repo path in the e2e server's registry so
+  // traversal tests can exercise the file route against a real directory.
+  // Guarded by FORGELINE_E2E=1 like the other __test__ helpers, and rejects
+  // paths outside the configured roots via registry.register.
+  app.post("/api/__test__/register-repo", async (c) => {
+    if (process.env.FORGELINE_E2E !== "1") {
+      return c.text("Not found", 404);
+    }
+    const body = await c.req.json<{ path?: unknown }>();
+    if (typeof body.path !== "string" || body.path.length === 0) {
+      return c.json({ code: "bad-request", title: "Missing path." }, 400);
+    }
+    const entry = await registry.register(body.path);
+    if (!entry) return c.notFound();
+    return c.json({ id: entry.id });
+  });
+  // Test-only helper: age the current bootstrap token so the e2e
+  // suite can prove the exchange rejects an expired token without waiting
+  // five real minutes. Same FORGELINE_E2E=1 guard as the mint endpoint.
+  // POST-only because the global middleware rejects non-GET/HEAD/OPTIONS
+  // requests without a JSON content-type, and no real route may share it.
+  app.post("/api/__test__/expire-bootstrap", async (c) => {
+    if (process.env.FORGELINE_E2E !== "1") {
+      return c.text("Not found", 404);
+    }
+    const body = await c.req.json<{ ageMs?: unknown }>();
+    const ageMs = typeof body.ageMs === "number" && body.ageMs > 0 ? body.ageMs : 0;
+    auth.expireBootstrapForTest(ageMs);
+    return c.json({ ok: true });
   });
 
   // Repo identity: the browser only ever sees opaque IDs. An unknown ID -> 404.
@@ -159,6 +228,44 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     const repo = registry.get(c.req.param("id"));
     if (!repo) return c.notFound();
     return c.json({ id: repo.id });
+  });
+
+  // Milestone-3 preview: read one repo-relative file over HTTP so the
+  // traversal contract (lexical check, then re-resolve and re-check before
+  // use) is exercised end to end, not only in unit tests. The browser sends
+  // an opaque repo id plus a repo-relative path; a forged id -> 404, an
+  // escaping or option-like path -> 400, a symlink swapped in after the
+  // first check -> 403, an oversize file -> 413, a missing file -> 404.
+  app.get("/api/repos/:id/file", async (c) => {
+    const checked = registry.child(c.req.param("id"), c.req.query("path") ?? "");
+    if (!checked.repo) return c.notFound();
+    if (!checked.ok || !checked.path) {
+      return c.json(
+        { code: "bad-path", title: "That path is not inside this repository." },
+        400,
+      );
+    }
+    const resolvedRoot = await resolveRealpath(checked.repo.path);
+    const resolvedChild = await resolveRealpath(checked.path);
+    if (!stillInside(resolvedRoot, resolvedChild)) {
+      return c.text("Forbidden: path resolves outside the repository", 403);
+    }
+    try {
+      const info = await stat(resolvedChild);
+      if (!info.isFile()) return c.notFound();
+      if (info.size > MAX_FILE_PREVIEW_BYTES) {
+        return c.json(
+          { code: "too-large", title: "That file is larger than 1 MiB." },
+          413,
+        );
+      }
+      const body = await readFile(resolvedChild);
+      return new Response(body, {
+        headers: { "Content-Type": "application/octet-stream" },
+      });
+    } catch {
+      return c.notFound();
+    }
   });
 
   app.get("/api/events", (c) => {

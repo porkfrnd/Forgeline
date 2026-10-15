@@ -29,7 +29,7 @@ Each decision lists its date, the choice, the alternatives rejected, and the rea
 
 ## Session auth (2026-10-14)
 
-- **Choice:** a random 32-byte token per run, printed in the URL and opened in the browser; the page exchanges it for an `HttpOnly; SameSite=Strict` cookie via a 302 that also strips `?t=` from the address bar; every `/api/*` route requires the cookie; every request is checked for an allowed `Host`; writes also require an allowed `Origin` and `Content-Type: application/json`.
+- **Choice:** a random 32-byte token per run, printed in the URL and opened in the browser; the page exchanges it for an `HttpOnly; SameSite=Strict` cookie via a 303 that also strips `?t=` from the address bar; every `/api/*` route requires the cookie; every request is checked for an allowed `Host`; writes also require an allowed `Origin` and `Content-Type: application/json`.
 - **Reason:** matches the spec's security section and blocks other websites and DNS rebinding from reaching the local API.
 
 ## Sign-in method (2026-10-14)

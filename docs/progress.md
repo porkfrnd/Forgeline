@@ -44,3 +44,27 @@ One dated entry per loop run. Never rewrite old entries. Newest entries go at th
 **Screenshot folder:** `screenshots/milestone-1/` (paper/midnight x desktop/narrow).
 
 **Follow-up noted for a human:** none blocking. Font bundling and the LICENSE choice are deferred to Milestone 9 by design.
+
+---
+
+## 2026-10-15 — Update 1 repair: expired-token e2e, file route, traversal, docs
+
+**Slice:** repair of the half-landed Update 1 hardening on top of Milestone 1.
+
+**Context:** a prior `verify`-green claim (26 unit / 22 e2e) left four gaps open: no e2e for expired tokens, no HTTP route exercising `registry.child`, regex-based static serving with one-encoding traversal coverage, and a missing "not a sandbox" note plus stale `302`s.
+
+**Plan (checklist):**
+- [x] Fix the mangled comment above `POST /api/__test__/expire-bootstrap` in `src/server/index.ts`.
+- [x] Add test-only `POST /api/__test__/roots`, `setRootsForTest` + `registerRepoForTest` helpers, and three file-route e2e tests (valid/400/404, symlink-swap 403, oversize 413).
+- [x] Gap 4 docs: "not a sandbox" paragraph in `docs/architecture.md`; `302`→`303` in architecture + decisions.
+- [x] Run the build-and-verify loop, update handoff docs, commit + push.
+
+**Steps and results:**
+1. Work — `src/server/session.ts` gained `expireBootstrapForTest`; `src/server/index.ts` gained the file route plus the guarded `__test__/roots` + `__test__/register-repo` endpoints; `serveStaticFile` is resolve-then-compare.
+2. Static check — `typecheck` pass, `lint` pass, `lint:copy ok`.
+3. Unit test — `vitest run`: 27 passed (4 files).
+4. Browser test — `playwright test`: 30 passed across desktop (1440px) and narrow (800px).
+5. Commit — on `main` with a `Verified:` trailer (`verify` green); push + `ls-remote` confirmation recorded below.
+
+**Commit:** (hash recorded after push)
+**Push:** `git push origin main` + `git ls-remote origin main` matched (see next entry / status header).
