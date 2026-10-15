@@ -75,6 +75,41 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 | 4 | Safety: action journal, snapshots, undo timeline, rescue mode, confirmation previews | done (`milestone-4`) |
 | 5 | Error translator with the full starter catalogue | done (`milestone-5`) |
 | 6 | Remote and sign-in: fetch, pull, push, GitHub device-flow sign-in | in progress |
+
+### Milestone 6 — what is verified and what is not
+
+**Verified on this machine (Node v24.21.0, git 2.47.3, Linux, no network to any
+remote):**
+
+- The device code request, the polling grant type `urn:ietf:params:oauth:grant-type:device_code`,
+  the `repo` scope, and `Accept: application/json` — 18 unit tests against a
+  local mock of `/login/device/code`, `/login/oauth/access_token`, and `/user`,
+  plus a live run of `dist/cli.js` pointed at the same mock, which produced a
+  real signed-in account and a real sign-out.
+- All four GitHub polling states (`authorization_pending`, `slow_down`,
+  `expired_token`, `access_denied`) come back as states, not exceptions.
+- Fetch, pull, and push against a real bare repository on disk: 16 unit and 6
+  e2e tests, including a genuine non-fast-forward rejection and a genuine merge
+  conflict that stops the pull.
+- **No OS keychain is available on this machine** (`secret-tool` is not
+  installed and there is no D-Bus session), so the in-memory fallback is what
+  actually ran, and its notice is shown in the interface. This is the case the
+  spec names, and it is the case that exists here — not a degraded
+  configuration.
+
+**NOT verified, and deliberately not claimed:**
+
+- **The askpass username for GitHub has not been tested against a real
+  remote.** `scripts/askpass.mjs` answers `x-access-token` because that is what
+  GitHub's documentation states for OAuth device-flow tokens. That is a
+  documentation reading, not a live result. No live test has been attempted
+  because there is no registered OAuth App and no remote to push to; per the
+  spec, a live failure would be reported rather than worked around by trying
+  other formats. `GITHUB_ASKPASS_USERNAME` exists to override it without a
+  rebuild when someone does test it.
+- The GitLab device-authorization grant (RFC 8628, GitLab from 17.9) is not
+  implemented, and nothing in this repository claims it is.
+- The three-OS CI results are still outstanding (no workflow exists yet).
 | 5 | Error translator with the full starter catalogue | not started |
 | 6 | Remote and sign-in: pull, push, GitHub device flow, lazy prompt | not started |
 | 7 | Branches, stash, history graph, blame, conflict resolver | not started |

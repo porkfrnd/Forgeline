@@ -436,3 +436,87 @@ export async function pushRepo(
   const outcome = await actionJson(repoEndpoint(repoId, "push"), opts);
   return outcome as RemoteOutcome | ActionError;
 }
+
+/** The sign-in state. `token` is deliberately absent: the server never sends
+ *  one, and if a future response ever carried it, that would be a bug rather
+ *  than a convenience. */
+export interface AuthState {
+  signedIn: boolean;
+  user: { login: string; name: string | null; avatarUrl: string | null } | null;
+  configured: boolean;
+  reason: string | null;
+  storeMode: "keychain" | "memory";
+  storeNotice: string | null;
+}
+
+export async function readAuth(): Promise<AuthState> {
+  const res = await fetch("/api/auth");
+  const parsed = (await res.json().catch(() => ({}))) as Partial<AuthState>;
+  return {
+    signedIn: parsed.signedIn === true,
+    user: parsed.user ?? null,
+    configured: parsed.configured === true,
+    reason: typeof parsed.reason === "string" ? parsed.reason : null,
+    storeMode: parsed.storeMode ?? "memory",
+    storeNotice: typeof parsed.storeNotice === "string" ? parsed.storeNotice : null,
+  };
+}
+
+/** What the device flow asked GitHub for, which is all the interface needs to
+ *  show the code and a button that opens GitHub. */
+export interface DeviceLogin {
+  userCode: string;
+  verificationUri: string;
+  intervalSeconds: number;
+}
+
+export type DevicePollResult =
+  | { state: "pending" }
+  | { state: "slow-down"; intervalSeconds: number }
+  | { state: "expired" }
+  | { state: "denied" }
+  | { state: "authorized"; signedIn: boolean }
+  /** The server will not answer further polls, so stop. Not a failure the user
+   *  needs to be told about — the flow simply restarts. */
+  | { state: "stopped" };
+
+export async function startDeviceLogin(): Promise<
+  { ok: true; start: DeviceLogin } | ActionError
+> {
+  const outcome = await actionJson("/api/auth/start", {});
+  if (isActionError(outcome)) return outcome;
+  return outcome as { ok: true; start: DeviceLogin };
+}
+
+export async function pollDeviceLogin(): Promise<DevicePollResult> {
+  const res = await fetch("/api/auth/poll");
+  const parsed = (await res.json().catch(() => ({}))) as Partial<DevicePollResult> & {
+    state?: string;
+  };
+  // Only the five states the flow knows are passed on. Anything else — an
+  // unauthenticated answer, a translator card — means the server has stopped
+  // polling, and the interface stops with it rather than spinning.
+  switch (parsed.state) {
+    case "pending":
+      return { state: "pending" };
+    case "slow-down":
+      return { state: "slow-down", intervalSeconds: parsed.intervalSeconds ?? 10 };
+    case "expired":
+      return { state: "expired" };
+    case "denied":
+      return { state: "denied" };
+    case "authorized":
+      return { state: "authorized", signedIn: true };
+    default:
+      return { state: "stopped" };
+  }
+}
+
+/** Sign out. The server answers with who was signed out, because "you are no
+ *  longer signed in as Ada" is more useful than a bare confirmation, and with
+ *  a note about revoking the app on GitHub. */
+export async function signOut(): Promise<{ ok: true; note?: string } | ActionError> {
+  const outcome = await actionJson("/api/auth/signout", {});
+  if (isActionError(outcome)) return outcome;
+  return outcome as { ok: true; note?: string };
+}

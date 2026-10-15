@@ -18,6 +18,8 @@ import {
 } from "./git/diff.js";
 import { journaled, undoCommand } from "./journal.js";
 import { takeSnapshot } from "./snapshots.js";
+import { createAuthProvider } from "./auth.js";
+import { createTokenStore, memoryStore, type TokenStore } from "./tokenStore.js";
 import {
   fetchRepo,
   listRemotes,
@@ -192,8 +194,16 @@ function securityHeaders(): Record<string, string> {
   };
 }
 
+/** The notice shown when a token is being kept in memory. Short, and true: on
+ *  a machine with no secret service this is the only safe place there is. */
+const KEYCHAIN_UNAVAILABLE =
+  "This machine has no OS keychain, so a sign-in is remembered only until Forgeline closes. It is never written to a file.";
+
 export interface CreateAppOptions {
   auth?: AuthManager;
+  /** Where sign-in tokens live. Supplied by `startServer` because the keychain
+   *  probe is asynchronous and `createApp` is not. */
+  tokenStore?: TokenStore;
   registry?: RepoRegistry;
   /** Injected by tests; a fresh one is created otherwise. */
   queue?: RepoQueue;
@@ -951,6 +961,80 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
   });
 
   /* --------------------------------------------------------------- *
+   * Sign-in (Milestone 6).
+   *
+   * The token never crosses this boundary. Every endpoint returns
+   * `signedIn` and the account's name and avatar, and nothing else — a token
+   * in a JSON response is a token in a devtools window. The one consumer that
+   * needs it is git, which gets it through `GIT_ASKPASS` on the environment of
+   * a single process.
+   * --------------------------------------------------------------- */
+
+  // The keychain probe is asynchronous, and `createApp` is not — so the store
+  // is built by the caller that starts the server and handed in here. When
+  // nothing is handed in (a direct `createApp` in a test, say), the fallback
+  // is memory-only AND SAYS SO, which is the one thing this fallback must never
+  // do quietly.
+  const tokenStore: TokenStore = opts.tokenStore ?? memoryStore(KEYCHAIN_UNAVAILABLE);
+  const authProvider = createAuthProvider(tokenStore);
+
+  app.get("/api/auth", async (c) => {
+    const user = await authProvider.currentUser();
+    return c.json({
+      signedIn: user !== null,
+      user,
+      // Whether sign-in is even possible, and why not if it isn't. A disabled
+      // button with this reason is the honest answer to "no app registered".
+      ...authProvider.capabilities(),
+    });
+  });
+
+  app.post("/api/auth/start", async (c) => {
+    const user = await authProvider.currentUser();
+    if (user !== null) {
+      return c.json({ signedIn: true, user }, 409);
+    }
+    try {
+      const start = await authProvider.startLogin();
+      return c.json({ ok: true, start });
+    } catch (err) {
+      // A missing client id is not a crash: it is the configured state, and
+      // the message says exactly what to do about it.
+      return c.json(
+        {
+          ok: false,
+          code: "auth-unavailable",
+          title: "Sign-in is not set up yet.",
+          explanation: err instanceof Error ? err.message : String(err),
+        },
+        409,
+      );
+    }
+  });
+
+  app.get("/api/auth/poll", async (c) => {
+    const polled = await authProvider.pollLogin();
+    if (polled.state === "authorized") {
+      const user = await authProvider.currentUser();
+      return c.json({ state: "authorized", signedIn: true, user });
+    }
+    return c.json({ state: polled.state });
+  });
+
+  app.post("/api/auth/signout", async (c) => {
+    const user = await authProvider.signOut();
+    return c.json({
+      ok: true,
+      // Telling the user they can also revoke the app in GitHub's settings is
+      // part of the spec: deleting a token here does not revoke it there.
+      user,
+      note: user === null
+        ? null
+        : "You are signed out of Forgeline. GitHub still lists this app under your authorised OAuth apps, where you can revoke it if you want to.",
+    });
+  });
+
+  /* --------------------------------------------------------------- *
    * Error fixes (Milestone 5).
    *
    * Each fix below is a REAL action, because the spec's rule is that a fix
@@ -1227,7 +1311,11 @@ export async function startServer(opts: StartOptions): Promise<ServerHandle> {
   }
   let actualPort = opts.port;
   const handles: ServerHandles = { queue: new RepoQueue(), live: new LiveWatcher(() => {}) };
-  const app = createApp(() => actualPort, { auth, registry, handles });
+  // The token store is built HERE rather than inside the app because probing
+  // the keychain is asynchronous and `createApp` is not. On a machine with no
+  // secret service this answers memory-only, and the interface is told.
+  const tokenStore = await createTokenStore();
+  const app = createApp(() => actualPort, { auth, tokenStore, registry, handles });
   const server = serve({ fetch: app.fetch, port: opts.port, hostname: opts.hostname });
   await new Promise<void>((resolvePromise, reject) => {
     const onError = (err: Error) => {

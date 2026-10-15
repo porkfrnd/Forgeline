@@ -4,6 +4,8 @@ import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serverInfo, mintToken, expireTokenForTest, sessionCookie, setRootsForTest, registerRepoForTest } from "./helpers.js";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 
 test.describe("Forgeline skeleton", () => {
   test("dashboard loads, token is exchanged for a session cookie and removed from the URL", async ({
@@ -1521,6 +1523,127 @@ test.describe("Milestone 6 remote operations", () => {
       await expect(page.locator(".error-card")).toHaveCount(0, { timeout: 10000 });
       const refs = spawnSync("git", ["for-each-ref"], { cwd: remote, encoding: "utf8" });
       expect(refs.stdout).toContain("refs/heads/main");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Milestone 6: sign-in.
+ *
+ * The prompt is tested against a local HTTP server that answers 401, which is
+ * git's real answer for a remote that refuses without credentials — so the
+ * trigger is exercised through real git output rather than by faking a code.
+ */
+test.describe("Milestone 6 sign-in", () => {
+  /** A remote that refuses every request the way an authenticated GitHub
+   *  endpoint does: `fatal: could not read Username for ...` exits non-zero. */
+  async function makeRefusingRemote(): Promise<{ url: string; close: () => Promise<void> }> {
+    const server: Server = createServer((req, res) => {
+      // Consume the request so git does not wait on a body that never comes,
+      // then refuse it. `Content-Length` and `Connection: close` both matter:
+      // without a length git waits for more, and without close it waits for a
+      // keep-alive reply that this server will never send.
+      req.resume();
+      res.writeHead(401, { "content-length": "0", connection: "close" });
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    return {
+      url: `http://127.0.0.1:${port}/repo.git`,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  test("an account is never asked for before it is needed", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const token = await mintToken(baseUrl);
+    await page.goto(`${baseUrl}/?t=${token}`);
+
+    // Not signed in is a normal state, with no warning badge and no prompt.
+    await expect(page.locator(".signin")).toHaveCount(0);
+    // The cookie matters: without it the server answers with the app's own
+    // HTML, which is not JSON and would parse as a failure rather than prove
+    // anything about the account.
+    const cookie = await sessionCookie(baseUrl);
+    const auth = (await (
+      await fetch(`${baseUrl}/api/auth`, { headers: { Cookie: cookie } })
+    ).json()) as { signedIn?: boolean };
+    expect(auth.signedIn).toBe(false);
+  });
+
+  test("a remote that refuses for want of credentials opens sign-in by itself", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const remote = await makeRefusingRemote();
+    const root = mkdtempSync(join(tmpdir(), "fl-e2e-signin-"));
+    const dir = join(root, "demo");
+
+    try {
+      mkdirSync(dir, { recursive: true });
+      spawnSync("git", ["init", "-q", "-b", "main", "."], { cwd: dir });
+      writeFileSync(join(dir, "a.txt"), "one\n");
+      spawnSync("git", ["add", "-A"], { cwd: dir });
+      spawnSync("git", ["commit", "-q", "-m", "base"], { cwd: dir });
+      spawnSync("git", ["remote", "add", "origin", remote.url], { cwd: dir });
+      // Point the branch at the remote so `git push` has somewhere to go. Without
+      // this git refuses with "no upstream branch" before it ever opens a
+      // connection — which is the right answer, but it is not the one this test
+      // is about.
+      spawnSync("git", ["config", "branch.main.remote", "origin"], { cwd: dir });
+      spawnSync("git", ["config", "branch.main.merge", "refs/heads/main"], { cwd: dir });
+      await setRootsForTest(baseUrl, [root]);
+      await registerRepoForTest(baseUrl, cookie, dir);
+
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.waitForSelector(".work-remote");
+      await page.locator(".work-remote").getByRole("button", { name: "Push" }).click();
+
+      // The prompt appears on its own — this is the one failure that means an
+      // account is the answer, so asking at any other time would be noise.
+      const prompt = page.locator(".signin");
+      await expect(prompt).toHaveCount(1, { timeout: 10000 });
+
+      // This e2e server runs with no GITHUB_CLIENT_ID, which is the state a real
+      // install starts in, so the prompt must say exactly that rather than show
+      // a sign-in button that could not work. The device flow itself is proven
+      // in src/server/auth.test.ts against a local mock of GitHub's endpoints.
+      await expect(prompt).toContainText("Sign-in is not set up yet.");
+      await expect(prompt).toContainText("No GitHub OAuth App has been registered");
+      // And because this machine has no keychain, that is said too rather than
+      // left to be discovered later.
+      await expect(prompt).toContainText("no OS keychain");
+      await page.screenshot({ path: "screenshots/m6-signin-auth.png" });
+
+      // Dismissing the prompt must never dismiss the git error: the reason
+      // nothing was pushed is still on screen afterwards, with sign-in left
+      // open as an option rather than a nag. (The prompt offers "Close" here
+      // because there is no configured app to defer signing in to; "Not now" is
+      // the label once a client id exists.)
+      await prompt.getByRole("button", { name: "Close" }).click();
+      await expect(prompt).toHaveCount(0);
+      await expect(page.locator(".error-card")).toHaveCount(1);
+      await expect(page.locator(".error-card")).toContainText("sign in");
+    } finally {
+      await remote.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a refusal that is not about credentials does not open sign-in", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root } = await makeAnonymousRepo(baseUrl, cookie, "no-auth-ask");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.waitForSelector(".worktable");
+      // A local repository with no remote at all: no remote actions, and
+      // certainly no sign-in question, because no account would have helped.
+      await expect(page.locator(".work-remote")).toHaveCount(0);
+      await expect(page.locator(".signin")).toHaveCount(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

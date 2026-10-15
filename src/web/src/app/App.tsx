@@ -13,6 +13,7 @@ import { CommitComposer } from "../components/CommitComposer";
 import { UndoTimeline } from "../components/UndoTimeline";
 import { ErrorCard } from "../components/ErrorCard";
 import { RemoteBar } from "../components/RemoteBar";
+import SignInPrompt from "../components/SignInPrompt";
 import { History } from "lucide-react";
 import {
   abortMerge,
@@ -49,6 +50,11 @@ export function App() {
   const [fixRunning, setFixRunning] = useState(false);
   /** The identity form, shown only when a "set name and email" fix is used. */
   const [identityPrompt, setIdentityPrompt] = useState(false);
+  // Sign-in is lazy in the strict sense: nothing about it is drawn until a
+  // remote actually refuses a command for want of a credential. `authFailure`
+  // is what makes the prompt open by itself, and not being signed in is still
+  // a perfectly normal state to launch in, with no badge saying otherwise.
+  const [signIn, setSignIn] = useState<{ authFailure: boolean } | null>(null);
   /** What the running-git check found, so the remove-lock fix can say why. */
   const [gitCheck, setGitCheck] = useState<{ running: string[]; title: string } | null>(null);
   const [identityName, setIdentityName] = useState("");
@@ -86,6 +92,10 @@ export function App() {
   /** Show the card for a failed action and record it in history. */
   const reportError = (error: ActionError): void => {
     setActiveError(error);
+    // A remote refusing for want of a credential is the one moment sign-in is
+    // actually wanted, so the prompt opens by itself rather than waiting to be
+    // asked for. Launching without an account stays a perfectly normal state.
+    if (AUTH_FAILURE_CODES.has(error.code)) setSignIn({ authFailure: true });
     void recordErrorShown(selectedId, error).then(setActiveErrorId, () => setActiveErrorId(null));
   };
 
@@ -189,6 +199,13 @@ export function App() {
    * Fixes this build can really run. Everything else the server offers is left
    * undrawn, which is what keeps every button a working feature.
    */
+  /** Codes that mean the remote would not let us in. These are the ones that
+   *  make the sign-in prompt appear on its own; every other failure gets a card
+   *  and no account question, because an account would not have helped. They
+   *  must be codes the translator actually emits — a code listed here that git
+   *  never produces is a prompt that never appears. */
+  const AUTH_FAILURE_CODES = new Set(["remote-auth", "ssh-key", "host-key"]);
+
   const AVAILABLE_FIXES = [
     "init-here",
     "push-set-upstream",
@@ -437,6 +454,19 @@ export function App() {
             behind={selected.behind}
             onChanged={() => void refreshChanges()}
             onError={reportError}
+          />
+        ) : null}
+
+        {signIn !== null ? (
+          <SignInPrompt
+            authFailure={signIn.authFailure}
+            onDismiss={() => {
+              setSignIn(null);
+              // "Not now" dismisses the prompt, never the git error: the card
+              // stays on screen with the option to sign in later.
+            }}
+            onSignedIn={() => setSignIn({ authFailure: false })}
+            onClose={() => setSignIn(null)}
           />
         ) : null}
 
