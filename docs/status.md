@@ -107,8 +107,17 @@ remote):**
   spec, a live failure would be reported rather than worked around by trying
   other formats. `GITHUB_ASKPASS_USERNAME` exists to override it without a
   rebuild when someone does test it.
-- The GitLab device-authorization grant (RFC 8628, GitLab from 17.9) is not
-  implemented, and nothing in this repository claims it is.
+- **The GitLab provider is deliberately not implemented yet.** The spec's
+  `AuthProvider` interface exists and GitHub fills it, but a GitLab
+  implementation would be unverifiable here — there is no GitLab instance to
+  authenticate against, and the same rule that stopped the askpass format from
+  being guessed applies. Its device-authorization grant is RFC 8628, supported
+  from GitLab 17.9, with a configurable base URL for a self-hosted instance and
+  a pasted personal-access-token fallback for older ones.
+- **`createPullRequest`, `createRelease`, and `listRepos` are declared on the
+  `AuthProvider` interface and not implemented.** Nothing draws a control that
+  calls them: the release manager reaches the local tag and asks for sign-in at
+  publish time, and no button exists that would open a pull request.
 - The three-OS CI results are still outstanding (no workflow exists yet).
 | 5 | Error translator with the full starter catalogue | not started |
 | 6 | Remote and sign-in: pull, push, GitHub device flow, lazy prompt | not started |
