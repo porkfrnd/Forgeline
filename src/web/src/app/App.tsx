@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { GitBranch } from "lucide-react";
+import { GitBranch, Inbox } from "lucide-react";
 import { useTheme } from "../theme/ThemeProvider";
 import { useRepos } from "./useRepos";
-import { fetchChanges, type ChangeFile } from "./git.js";
+import { fetchChanges, listStashes, type ChangeFile } from "./git.js";
 import { RepoRail } from "../components/RepoRail";
 import { StatusBar } from "../components/StatusBar";
 import { CommandPalette, type PaletteAction } from "../components/CommandPalette";
@@ -15,6 +15,7 @@ import { ErrorCard } from "../components/ErrorCard";
 import { RemoteBar } from "../components/RemoteBar";
 import SignInPrompt from "../components/SignInPrompt";
 import { BranchPanel } from "../components/BranchPanel";
+import { StashPanel } from "../components/StashPanel";
 import { History } from "lucide-react";
 import {
   abortMerge,
@@ -59,8 +60,12 @@ export function App() {
   // The branch panel, opened from the branch indicator. It is the only control
   // that draws something other than the workbench, so it is state on its own.
   const [branchPanelOpen, setBranchPanelOpen] = useState(false);
+  const [stashPanelOpen, setStashPanelOpen] = useState(false);
   /** A one-line note shown by a panel that wants to confirm what it just did. */
   const [note, setNote] = useState<string | null>(null);
+  /** How many stashes there are, for a number on the toolbar. Zero draws no
+   *  badge at all — an empty badge would be a decoration that says nothing. */
+  const [stashCount, setStashCount] = useState(0);
   /** What the running-git check found, so the remove-lock fix can say why. */
   const [gitCheck, setGitCheck] = useState<{ running: string[]; title: string } | null>(null);
   const [identityName, setIdentityName] = useState("");
@@ -91,7 +96,17 @@ export function App() {
   useEffect(() => {
     setSelectedFile(null);
     setFiles([]);
-    if (selectedId === null) return;
+    if (selectedId === null) {
+      setStashCount(0);
+      return;
+    }
+    // The stash count is read here because a stash surviving while the tree is
+    // clean is exactly the case worth putting a number next to — the work is
+    // safe somewhere other than the working tree.
+    void listStashes(selectedId).then(
+      (stashes) => setStashCount(stashes.length),
+      () => setStashCount(0),
+    );
     void fetchChanges(selectedId).then(setFiles, () => setFiles([]));
   }, [selectedId]);
 
@@ -339,6 +354,18 @@ export function App() {
         <span className="spacer" />
         <button
           type="button"
+          className="button toolbar-stash"
+          aria-expanded={stashPanelOpen}
+          onClick={() => setStashPanelOpen((v) => !v)}
+          disabled={selectedId === null}
+          title={selectedId === null ? "Open a repository to use stashes" : "Stashes"}
+        >
+          <Inbox size={15} strokeWidth={1.5} aria-hidden="true" />
+          Stashes
+          {stashCount > 0 ? <span className="badge-with mono">{stashCount}</span> : null}
+        </button>
+        <button
+          type="button"
           className="button search-field"
           onClick={() => setAppearanceOpen(true)}
           aria-label="Search commits and files"
@@ -482,6 +509,17 @@ export function App() {
             }}
             onSignedIn={() => setSignIn({ authFailure: false })}
             onClose={() => setSignIn(null)}
+          />
+        ) : null}
+
+        {stashPanelOpen && selectedId !== null ? (
+          <StashPanel
+            repoId={selectedId}
+            hasChanges={files.length > 0}
+            onChanged={() => void refreshChanges()}
+            onError={reportError}
+            onNote={setNote}
+            onClose={() => setStashPanelOpen(false)}
           />
         ) : null}
 

@@ -1779,3 +1779,171 @@ test.describe("Milestone 7 branches", () => {
     }
   });
 });
+
+/**
+ * Milestone 7: stashes.
+ *
+ * The stack is a stack, so the tests check order and index, and every state
+ * assertion is answered by git itself.
+ */
+test.describe("Milestone 7 stashes", () => {
+  /** A repository with one commit, and a dirty working tree to put aside. */
+  async function makeStashRepo(baseUrl: string, cookie: string, name: string, dirty: boolean) {
+    const root = mkdtempSync(join(tmpdir(), `fl-e2e-stash-${name}-`));
+    const dir = join(root, "demo");
+    mkdirSync(dir, { recursive: true });
+    spawnSync("git", ["init", "-q", "-b", "main", "."], { cwd: dir });
+    spawnSync("git", ["config", "user.email", "ada@fixture.invalid"], { cwd: dir });
+    spawnSync("git", ["config", "user.name", "Ada Fixture"], { cwd: dir });
+    writeFileSync(join(dir, "f.txt"), "base\n");
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["commit", "-q", "-m", "base"], { cwd: dir });
+    if (dirty) writeFileSync(join(dir, "f.txt"), "half written\n");
+    await setRootsForTest(baseUrl, [root]);
+    const id = await registerRepoForTest(baseUrl, cookie, dir);
+    return { root, dir, id };
+  }
+
+  const status = (dir: string): string =>
+    spawnSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+
+  const stashList = (dir: string): string[] =>
+    spawnSync("git", ["stash", "list", "--format=%gs"], { cwd: dir, encoding: "utf8" })
+      .stdout.split("\n")
+      .filter((line) => line.length > 0);
+
+  test("putting work aside cleans the tree and names the stash", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeStashRepo(baseUrl, cookie, "save", true);
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-stash").click();
+      await page.locator(".stash-save input").fill("the login work, half done");
+      await page.locator(".stash-save button[type=submit]").click();
+      await page.waitForTimeout(1500);
+
+      // git is asked, not the API's own reply.
+      expect(stashList(dir)).toEqual(["On main: the login work, half done"]);
+      expect(status(dir)).toBe("");
+      expect(readFileSync(join(dir, "f.txt"), "utf8")).toBe("base\n");
+      await expect(page.locator(".work-note")).toContainText("done");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a clean tree is told there is nothing to put aside, and nothing is created", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeStashRepo(baseUrl, cookie, "clean", false);
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-stash").click();
+      const panel = page.locator(".stash-panel");
+      // The button is offered, because the tree's state is not known until the
+      // server answers — and the reason it cannot work is written out, not
+      // shown by a disabled control with no explanation.
+      await expect(panel).toContainText("Everything here is committed");
+      await expect(panel.locator(".stash-save button[type=submit]")).toBeDisabled();
+
+      // No stash exists, and none is invented by asking.
+      expect(stashStack(dir)).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("restoring leaves the stash on the stack, so it can be restored again", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeStashRepo(baseUrl, cookie, "restore", true);
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-stash").click();
+      await page.locator(".stash-save input").fill("keep me");
+      await page.locator(".stash-save button[type=submit]").click();
+      await page.waitForTimeout(1500);
+      expect(stashList(dir)).toEqual(["On main: keep me"]);
+      expect(status(dir)).toBe("");
+
+      // Restore: the work comes back and the entry stays. This is the restore a
+      // user asks for more often than they think, and the one that cannot lose
+      // anything — undoing the restore still leaves the stash where it was.
+      await page.locator(".stash-row").first().getByRole("button", { name: "Restore", exact: true }).click();
+      await page.waitForTimeout(1500);
+      expect(readFileSync(join(dir, "f.txt"), "utf8")).toBe("half written\n");
+      expect(stashList(dir)).toEqual(["On main: keep me"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("restoring-with-removal takes the entry off the stack in the same step", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeStashRepo(baseUrl, cookie, "pop", true);
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-stash").click();
+      await page.locator(".stash-save input").fill("finish and go");
+      await page.locator(".stash-save button[type=submit]").click();
+      await page.waitForTimeout(1500);
+      expect(stashList(dir)).toEqual(["On main: finish and go"]);
+
+      // Kept separate from the test above on purpose: applying a stash and then
+      // popping it is not something git will do, because the tree already holds
+      // those changes. The two restores are two decisions and get two tests.
+      await page
+        .locator(".stash-row")
+        .first()
+        .getByRole("button", { name: "Restore and take it off the stack" })
+        .click();
+      await page.waitForTimeout(1500);
+      expect(readFileSync(join(dir, "f.txt"), "utf8")).toBe("half written\n");
+      expect(stashList(dir)).toEqual([]);
+      await expect(page.locator(".stash-row")).toHaveCount(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("dropping a stash asks first, and the ask is a real confirm", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeStashRepo(baseUrl, cookie, "drop", true);
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-stash").click();
+      await page.locator(".stash-save input").fill("about to be dropped");
+      await page.locator(".stash-save button[type=submit]").click();
+      await page.waitForTimeout(1500);
+
+      await page.locator(".stash-row").getByRole("button", { name: "Drop" }).click();
+      // Nothing dropped yet — dropping is the only destructive stash action, so
+      // it asks in place rather than acting.
+      expect(stashList(dir)).toEqual(["On main: about to be dropped"]);
+      await expect(page.locator(".stash-row").getByRole("button", { name: "Keep" })).toBeVisible();
+
+      await page.locator(".stash-row").getByRole("button", { name: "Drop it" }).click();
+      await page.waitForTimeout(1500);
+      expect(stashList(dir)).toEqual([]);
+      await expect(page.locator(".stash-row")).toHaveCount(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/** The stash stack as git reports it, which is what every stash assertion here
+ *  is measured against — a stash the interface claims to have made and git does
+ *  not know about is worse than no stash. */
+const stashStack = (dir: string): string[] =>
+  spawnSync("git", ["stash", "list"], { cwd: dir, encoding: "utf8" }).stdout
+    .split("\n")
+    .filter((line) => line.length > 0);

@@ -346,3 +346,19 @@ One dated entry per loop run. Never rewrite old entries. Newest entries go at th
 **A bug worth recording, because it was found by a test and would not have been found by reading.** The M6 sign-in e2e passed and then failed, and the card had changed from "the remote needs you to sign in" to "the remote refused you — permissions problem". Nothing in the sign-in code had changed. The cause: `has(output, "http", "403")` was matching the *port number*. The local fixture was on `http://127.0.0.1:40387`, which really does contain "403", so a 401 was translated as a permissions problem. It had been passing before because the fixture had a different port.
 
 Fixing it exposed a second instance of the same class of mistake: the rule matching `"unable to access"` plus `"http"` claimed *every* unreachable remote was a credentials problem, so a hostname that didn't resolve told the user to set up sign-in. `git` prints "unable to access" identically for a typo and for a refusal, so that wording cannot separate them. Both rules now match only what a credential refusal actually prints — `authentication failed`, `could not read username`, `terminal prompts disabled` — and the network rule takes the rest. Wrong-but-plausible cards are worse than vague ones, because a user acts on them.
+
+## M7.2 — stashes, and a translator parser that had been quietly wrong
+
+**Steps and results:**
+
+1. `src/server/git/stash.ts` does save, list, apply, pop, and drop. `push` is used rather than bare `git stash` so a stash can carry a name — three unnamed stashes are anonymous by the second one. The stack is listed with `--format` so nothing has to be parsed out of a column layout.
+2. **`git stash push` exits 0 on a clean tree.** It prints "No local changes to save" and returns success, so an exit-code check reports a stash that does not exist and tells the user their work is safe when it was already committed. The stack is counted before and after instead. This was found by a test, not by reading.
+3. 12 unit tests and 5 e2e tests. `apply` and `pop` are two separate functions rather than one with a flag, and two separate buttons in the interface with the difference written out in words, because restoring is the one a user asks for more often than they think.
+4. A translator rule was added for "No local changes to save" — with no fixes attached, since it is not a failure and there is nothing for a button to act on.
+
+**A parser bug found while adding it.** `conflictFiles()` had one pattern for every CONFLICT line: "everything after the last ' in '". Real git prints two shapes, and the pattern read the second one as a whole sentence:
+
+- `CONFLICT (content): Merge conflict in f.txt` — worked.
+- `CONFLICT (modify/delete): f.txt deleted in del and modified in HEAD.  Version HEAD of f.txt left in tree.` — did not. It produced `del and modified in HEAD.  Version HEAD of f.txt left in tree.` as a filename.
+
+The fix chooses the shape first and reads the name from the right end of it, which also had to strip a trailing period that belongs to git's sentence and not to the file. Both shapes are now tested against strings captured from real git, and a three-shapes-at-once case checks that names come out once each in order. A filename is the thing a user copies into a command, so a wrong one is worse than none.

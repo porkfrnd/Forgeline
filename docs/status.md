@@ -251,17 +251,23 @@ to `polling` while changes are still reported.
 Gaps 9 and 13 (app-data cache and persisted settings) both want the same
 storage module; they should land together rather than twice.
 
-### Milestone 7 — branches done
+### Milestone 7 — branches and stashes done
 
 Every branch operation is journalled and answers with the branch git is actually
 on afterwards, read back from `symbolic-ref` rather than remembered from the
 request. `git switch` is used instead of `git checkout` because the latter will
 guess between a branch and a path with the same name.
 
-13 unit tests and 4 e2e tests run against real repositories on disk. Delete is
+13 unit and 4 e2e tests run against real repositories on disk. Delete is
 two functions — `deleteBranch` refuses, `forceDeleteBranch` does not — so a
 branch with commits nothing else has is never deleted by accident; the e2e test
 asserts exactly that, and that the confirm button really does delete.
+
+**Stash.** `save`, `list`, `apply`, `pop`, `drop`, all journalled with a
+working-tree snapshot so a restore can be undone. `git stash push` exits 0 on a
+clean tree, so the stack is counted before and after rather than trusting the
+status — without that, the user is told their work is stashed when it was
+already committed. 12 unit and 5 e2e tests.
 
 Two translator rules were corrected while verifying this slice, both found by
 tests rather than by reading, and both recorded in docs/progress.md: a port

@@ -56,9 +56,36 @@ const anyHas = (output: string, ...needles: string[]) =>
  *  end of the line, once per file. */
 function conflictFiles(output: string): string[] {
   const found = new Set<string>();
-  for (const l of output.split("\n")) {
-    const m = l.match(/CONFLICT \([^)]*\): .*? in ([^:]+?)\s*$/);
-    if (m?.[1]) found.add(m[1].trim());
+  for (const line of output.split("\n")) {
+    const match = line.match(/CONFLICT \([^)]*\): (.+)$/);
+    if (match?.[1] === undefined) continue;
+    const tail = match[1].trim();
+
+    // Two shapes, both from real git, and they need different handling:
+    //
+    //   CONFLICT (content): Merge conflict in f.txt
+    //   CONFLICT (modify/delete): f.txt deleted in del and modified in HEAD.
+    //     Version HEAD of f.txt left in tree.
+    //
+    // An earlier single pattern grabbed "everything after the last ' in '",
+    // which read the second shape as `del and modified in HEAD.  Version HEAD
+    // of f.txt left in tree.` — a filename nobody could use. So the shape is
+    // chosen first, and the name is read from the right end of it.
+    let name: string;
+    if (tail.startsWith("Merge conflict in ")) {
+      name = tail.slice("Merge conflict in ".length).trim();
+    } else if (tail.startsWith("Rename/rename conflict")) {
+      // "Rename/rename conflict in a.txt, renamed to b.txt" — the new name is
+      // the one in the working tree, and the one the user has to resolve.
+      const renamed = tail.match(/renamed to (.+)$/);
+      name = renamed?.[1] !== undefined ? renamed[1].split(",")[0].trim() : tail;
+    } else {
+      // The name leads the line and may be followed by a sentence, so it is
+      // the first token — and a trailing period belongs to the sentence.
+      name = tail.split(/\s+/)[0] ?? "";
+      name = name.replace(/\.$/, "");
+    }
+    if (name.length > 0) found.add(name);
   }
   return [...found];
 }
@@ -220,6 +247,21 @@ const RULES: ErrorRule[] = [
       explanation:
         "This computer is looking at a commit directly rather than at a branch, so new commits would belong to nowhere and could be lost. Create a branch here and the work continues on it.",
       fixes: [{ id: "create-branch", label: "Create a branch here" }],
+    }),
+  },
+  {
+    // Verified: "No local changes to save". git prints this on **stdout** and
+    // exits 0, so a caller checking the exit code reports a stash that does not
+    // exist — which is why src/server/git/stash.ts counts the stack instead of
+    // trusting the status. It is not a failure, so there are no fixes: the work
+    // is already committed and there is nothing for a card's buttons to act on.
+    matches: (output) => has(output, "no local changes to save"),
+    build: () => ({
+      code: "nothing-to-stash",
+      title: "There is nothing to put aside.",
+      explanation:
+        "Everything in this working tree is already committed, so there is nothing for a stash to hold. Make an edit and it becomes available.",
+      fixes: [],
     }),
   },
   {

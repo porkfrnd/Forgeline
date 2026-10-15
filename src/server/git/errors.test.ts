@@ -428,4 +428,45 @@ describe("translateError's host and file extraction", () => {
     expect(card.code).toBe("remote-auth");
     expect(card.title).toBe("The remote refused you.");
   });
+  it("names a file from a modify/delete conflict, not the whole sentence", () => {
+    // Real git output, captured. The name leads the line and a sentence
+    // follows it, and an earlier pattern took "everything after the last
+    // ' in '" — which produced "del and modified in HEAD.  Version HEAD of
+    // f.txt left in tree." as a filename.
+    const card = translateError(
+      "CONFLICT (modify/delete): f.txt deleted in del and modified in HEAD.  Version HEAD of f.txt left in tree.\nAutomatic merge failed; fix conflicts and then commit the result.",
+      "git merge",
+    );
+    expect(card.explanation).toContain("The merge stopped at f.txt.");
+    // The whole sentence must not appear as if it were a filename.
+    expect(card.explanation).not.toContain("left in tree.");
+  });
+
+  it("names every file in a multi-file conflict, once each", () => {
+    const card = translateError(
+      [
+        "CONFLICT (content): Merge conflict in a.txt",
+        "CONFLICT (content): Merge conflict in b.txt",
+        "CONFLICT (content): Merge conflict in b.txt",
+        "CONFLICT (modify/delete): c.txt deleted in x and modified in HEAD.",
+      ].join("\n"),
+      "git merge",
+    );
+    // Every file named once, in the order git reported them — the explanation
+    // lists them rather than hiding behind "several files", because "which
+    // ones" is the part the user has to answer.
+    expect(card.explanation).toContain("The merge stopped at a.txt, b.txt, c.txt.");
+    expect(card.explanation).not.toContain("b.txt, b.txt");
+    expect(card.title).toContain("several files");
+  });
+
+  it("translates a stash on a clean tree as there being nothing to put aside", () => {
+    // git prints this on stdout and exits 0, so a caller that trusts the exit
+    // code reports a stash that does not exist.
+    const card = translateError("No local changes to save", "git stash push");
+    expect(card.code).toBe("nothing-to-stash");
+    expect(card.explanation).toContain("already committed");
+    // Not a failure, so no fix button is offered.
+    expect(card.fixes).toEqual([]);
+  });
 });

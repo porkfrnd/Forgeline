@@ -27,6 +27,13 @@ import {
   pushRepo,
 } from "./git/remote.js";
 import {
+  applyStash,
+  dropStash,
+  listStashes,
+  popStash,
+  saveStash,
+} from "./git/stash.js";
+import {
   branchExists,
   createBranch,
   currentBranch,
@@ -1043,6 +1050,114 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
         ? null
         : "You are signed out of Forgeline. GitHub still lists this app under your authorised OAuth apps, where you can revoke it if you want to.",
     });
+  });
+
+  /* --------------------------------------------------------------- *
+   * Stash (Milestone 7).
+   *
+   * Everything here is a working-tree change, so each action takes a snapshot
+   * first — restoring is the common case for a stash, and an undo that left
+   * the tree where the stash was cannot be offered.
+   * --------------------------------------------------------------- */
+
+  app.get("/api/repos/:id/stashes", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    return c.json({ stashes: await listStashes(repo.path) });
+  });
+
+  /**
+   * Put the working tree aside as a new stash.
+   *
+   * Returns `ok: false` with `nothing-to-stash` when the tree is clean, because
+   * `git stash push` exits 0 in that case and would otherwise report a stash
+   * that does not exist.
+   */
+  app.post("/api/repos/:id/stashes/save", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ message?: unknown }>().catch(() => ({}) as { message?: unknown });
+    const message = typeof body.message === "string" ? body.message : undefined;
+
+    const snapshot = await takeSnapshot(repo.path);
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        message === undefined ? "Put the working tree aside" : `Put the working tree aside: ${message}`,
+        () => saveStash(repo.path, message),
+        {
+          // Stashing is its own kind of undoable: the tool remembers how to
+          // restore, and the snapshot is the fallback if it doesn't.
+          undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref },
+          notUndoableReason: "A stash cannot be undone by turning it off, only by restoring it.",
+        },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, created: result.created, snapshot: snapshot.ref });
+  });
+
+  /**
+   * Put a stash back. The default is `apply`, which leaves the entry on the
+   * stack: the snapshot journal can still undo the working-tree change, and the
+   * stash stays available if the user wants it again.
+   */
+  app.post("/api/repos/:id/stashes/restore", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ ref?: unknown; pop?: unknown }>().catch(() => ({}) as {
+      ref?: unknown;
+      pop?: unknown;
+    });
+    const ref = typeof body.ref === "string" ? body.ref : undefined;
+    const pop = body.pop === true;
+
+    const snapshot = await takeSnapshot(repo.path);
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        pop === true ? "Restored the stash and removed it" : "Restored the stash",
+        () => (pop === true ? popStash(repo.path, ref) : applyStash(repo.path, ref)),
+        { undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref } },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, removed: pop, snapshot: snapshot.ref });
+  });
+
+  /** Remove a stash from the stack, with a bare `refs/stash@{n}`. This is the
+   *  only destructive stash action, and the interface asks first. */
+  app.post("/api/repos/:id/stashes/drop", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ ref?: unknown }>();
+    if (typeof body.ref !== "string" || body.ref.length === 0) {
+      return c.json({ code: "bad-request", title: "Which stash?" }, 400);
+    }
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        "Dropped a stash",
+        () => dropStash(repo.path, body.ref as string),
+        {
+          // A dropped stash is gone from the stack; only the reflog has it
+          // after, and this app will not go looking.
+          undoable: false,
+          notUndoableReason:
+            "A dropped stash is gone. Git's reflog still holds it for a while, but Forgeline is not going to go rummaging in the reflog to put it back.",
+        },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true });
   });
 
   /* --------------------------------------------------------------- *

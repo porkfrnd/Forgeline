@@ -598,3 +598,50 @@ export async function renameBranch(
 ): Promise<{ ok: true; nowOn?: string | null } | ActionError> {
   return branchCall(repoId, "rename", { name });
 }
+
+/** A stash entry, in the order `git stash list` reports: newest first. */
+export interface StashInfo {
+  /** `refs/stash@{n}`, which is what the server takes back. */
+  ref: string;
+  /** The visible position, 0 being the most recent. */
+  index: number;
+  message: string;
+  date: string;
+  parent: string;
+  reflogSelector: string;
+}
+
+export async function listStashes(repoId: string): Promise<StashInfo[]> {
+  const res = await fetch(`/api/repos/${encodeURIComponent(repoId)}/stashes`);
+  const parsed = (await res.json().catch(() => ({}))) as { stashes?: StashInfo[] };
+  return parsed.stashes ?? [];
+}
+
+export type StashSaveOutcome = { ok: true; snapshot?: string } | ActionError;
+
+export async function saveStash(repoId: string, message?: string): Promise<StashSaveOutcome> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/stashes/save`, message === undefined ? {} : { message }) as Promise<StashSaveOutcome>;
+}
+
+/**
+ * Put a stash back. `apply` is the default and leaves it on the stack; `pop`
+ * removes it in the same step and is offered separately, since that is a
+ * decision the user should make rather than one the default should make for
+ * them.
+ */
+export async function restoreStash(
+  repoId: string,
+  ref: string | undefined,
+  pop: boolean,
+): Promise<{ ok: true } | ActionError> {
+  return actionJson(
+    `/api/repos/${encodeURIComponent(repoId)}/stashes/restore`,
+    { ref, pop },
+  ) as Promise<{ ok: true } | ActionError>;
+}
+
+export async function dropStash(repoId: string, ref: string): Promise<{ ok: true } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/stashes/drop`, { ref }) as Promise<
+    { ok: true } | ActionError
+  >;
+}
