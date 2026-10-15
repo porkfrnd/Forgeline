@@ -286,6 +286,15 @@ makes git consider the conflict resolved, so a button with that label that hid
 the conflict would be the worst thing this feature could do. 11 unit and 6 e2e
 tests, all driving a real merge into a real conflict.
 
+**Releases.** The plan is stated before anything is done, because a release is
+the one action easiest to describe in advance: this is the version now, this is
+what it becomes, these are the commits it contains. The version is read from
+`package.json` and never invented — anything that is not the three-number form is
+refused with the reason written out. The changelog is sorted into Added / Fixed /
+Changed from conventional commits, newest first, written under the title. And
+nothing commits: the commit is the user's, because the message is the one part of
+a release that should not be automatic.
+
 Two translator rules were corrected while verifying this slice, both found by
 tests rather than by reading, and both recorded in docs/progress.md: a port
 number containing `403` was being read as an HTTP status, and the wording git

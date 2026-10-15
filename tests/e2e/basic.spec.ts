@@ -2263,3 +2263,159 @@ test.describe("Milestone 7 conflict resolver", () => {
     }
   });
 });
+
+/**
+ * Milestone 8: the release manager.
+ *
+ * A release is stated before it is made — this is the version now, this is what
+ * it becomes, these are the commits it contains — and then nothing is committed,
+ * because the message is the one part of a release that should not be automatic.
+ */
+test.describe("Milestone 8 releases", () => {
+  async function makeReleasableRepo(baseUrl: string, cookie: string, name: string) {
+    const root = mkdtempSync(join(tmpdir(), `fl-e2e-release-${name}-`));
+    const dir = join(root, "demo");
+    mkdirSync(dir, { recursive: true });
+    spawnSync("git", ["init", "-q", "-b", "main", "."], { cwd: dir });
+    spawnSync("git", ["config", "user.email", "ada@fixture.invalid"], { cwd: dir });
+    spawnSync("git", ["config", "user.name", "Ada Fixture"], { cwd: dir });
+    writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name: "demo", version: "1.2.3" }, null, 2)}\n`);
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["commit", "-q", "-m", "chore: initial"], { cwd: dir });
+    // The tag sits *below* the releases, so there are commits after it.
+    spawnSync("git", ["tag", "-a", "v1.2.2", "-m", "previous"], { cwd: dir });
+    spawnSync("git", ["commit", "-q", "--allow-empty", "-m", "feat: add the first thing"], { cwd: dir });
+    spawnSync("git", ["commit", "-q", "--allow-empty", "-m", "fix: mend it"], { cwd: dir });
+    await setRootsForTest(baseUrl, [root]);
+    const id = await registerRepoForTest(baseUrl, cookie, dir);
+    return { root, dir, id };
+  }
+
+  test("the plan is stated before anything is done", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeReleasableRepo(baseUrl, cookie, "plan");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-release").click();
+      const panel = page.locator(".release-panel");
+      await expect(panel).toBeVisible();
+
+      // The version read from package.json, not invented.
+      const version = spawnSync("git", ["show", "HEAD:package.json"], { cwd: dir, encoding: "utf8" });
+      const onDisk = JSON.parse(version.stdout).version as string;
+      await expect(panel).toContainText(onDisk);
+      await expect(panel).toContainText("v1.2.2");
+      // The commits the release would contain, with the merge-style subject
+      // excluded — those are not things anyone did.
+      await expect(panel.locator(".release-commit")).toHaveCount(2);
+      await expect(panel).toContainText("feat: add the first thing");
+      await expect(panel).toContainText("fix: mend it");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("making a release writes the version, the changelog, and the tag — and no commit", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeReleasableRepo(baseUrl, cookie, "make");
+    const headBefore = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-release").click();
+      // A minor release, because there is a feat in it.
+      await page.locator(".release-choice label", { hasText: "minor" }).click();
+      await page.locator(".release-panel").getByRole("button", { name: "Make the 1.3.0 release" }).click();
+      await page.waitForTimeout(2000);
+
+      // git is asked, not the API's own reply.
+      expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version).toBe("1.3.0");
+
+      // The changelog is newest first, under the title, with the subjects
+      // sorted — and it is the one written this time.
+      const changelog = readFileSync(join(dir, "CHANGELOG.md"), "utf8");
+      expect(changelog).toContain("1.3.0");
+      expect(changelog).toContain("### Added");
+      expect(changelog).toContain("add the first thing");
+
+      // The tag exists, on the commit it was made on — which is the commit
+      // that was already HEAD, because nothing was committed for it.
+      const tags = spawnSync("git", ["tag", "--list"], { cwd: dir, encoding: "utf8" }).stdout.split("\n");
+      expect(tags).toContain("v1.3.0");
+      const tagged = spawnSync("git", ["rev-parse", "v1.3.0^{commit}"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(tagged).toBe(headBefore);
+
+      // Nothing committed: the commit is the user's, because the message is
+      // the one part of a release that should not be automatic.
+      const headAfter = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(headAfter).toBe(headBefore);
+      const staged = spawnSync("git", ["diff", "--cached", "--name-only"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(staged).toContain("package.json");
+      expect(staged).toContain("CHANGELOG.md");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a repository with nothing since its tag has nothing to release", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const root = mkdtempSync(join(tmpdir(), "fl-e2e-release-empty-"));
+    const dir = join(root, "demo");
+
+    try {
+      mkdirSync(dir, { recursive: true });
+      spawnSync("git", ["init", "-q", "-b", "main", "."], { cwd: dir });
+      spawnSync("git", ["config", "user.email", "ada@fixture.invalid"], { cwd: dir });
+      spawnSync("git", ["config", "user.name", "Ada Fixture"], { cwd: dir });
+      writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name: "demo", version: "1.2.3" }, null, 2)}\n`);
+      spawnSync("git", ["add", "-A"], { cwd: dir });
+      spawnSync("git", ["commit", "-q", "-m", "chore: initial"], { cwd: dir });
+      spawnSync("git", ["tag", "-a", "v1.2.3", "-m", "the whole thing"], { cwd: dir });
+      await setRootsForTest(baseUrl, [root]);
+      await registerRepoForTest(baseUrl, cookie, dir);
+
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-release").click();
+      const panel = page.locator(".release-panel");
+      // Said in words, and the button can't be pressed into making something.
+      await expect(panel).toContainText("Nothing has been committed since the last tag");
+      await expect(panel.getByRole("button", { name: "Nothing to release" })).toBeDisabled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a version that isn't semVER is refused rather than guessed at", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const root = mkdtempSync(join(tmpdir(), "fl-e2e-release-nosemver-"));
+    const dir = join(root, "demo");
+
+    try {
+      mkdirSync(dir, { recursive: true });
+      spawnSync("git", ["init", "-q", "-b", "main", "."], { cwd: dir });
+      spawnSync("git", ["config", "user.email", "ada@fixture.invalid"], { cwd: dir });
+      spawnSync("git", ["config", "user.name", "Ada Fixture"], { cwd: dir });
+      writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name: "demo", version: "banana" }, null, 2)}\n`);
+      spawnSync("git", ["add", "-A"], { cwd: dir });
+      spawnSync("git", ["commit", "-q", "-m", "chore: initial"], { cwd: dir });
+      await setRootsForTest(baseUrl, [root]);
+      await registerRepoForTest(baseUrl, cookie, dir);
+
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-release").click();
+      const panel = page.locator(".release-panel");
+      // No next version is offered, and the reason is written out rather than
+      // left to a disabled control.
+      await expect(panel).toContainText("not in the three-number form");
+      await expect(panel).toContainText("not going to guess");
+      await expect(panel.getByRole("button", { name: /Make the/ })).toHaveCount(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

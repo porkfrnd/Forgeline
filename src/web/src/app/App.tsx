@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { GitBranch, Inbox } from "lucide-react";
+import { GitBranch, Inbox, Tag } from "lucide-react";
 import { useTheme } from "../theme/ThemeProvider";
 import { useRepos } from "./useRepos";
 import { fetchChanges, listStashes, readConflicts, type ChangeFile } from "./git.js";
@@ -18,6 +18,7 @@ import { BranchPanel } from "../components/BranchPanel";
 import { StashPanel } from "../components/StashPanel";
 import { HistoryPanel } from "../components/HistoryPanel";
 import { ConflictResolver } from "../components/ConflictResolver";
+import { ReleasePanel } from "../components/ReleasePanel";
 import { History } from "lucide-react";
 import {
   abortMerge,
@@ -70,6 +71,7 @@ export function App() {
    * than derived from a list so it can stay open across a refresh of that list.
    */
   const [conflictOpen, setConflictOpen] = useState(false);
+  const [releaseOpen, setReleaseOpen] = useState(false);
   /** A one-line note shown by a panel that wants to confirm what it just did. */
   const [note, setNote] = useState<string | null>(null);
   /** How many stashes there are, for a number on the toolbar. Zero draws no
@@ -380,6 +382,17 @@ export function App() {
         </button>
         <button
           type="button"
+          className="button toolbar-release"
+          aria-expanded={releaseOpen}
+          onClick={() => setReleaseOpen((v) => !v)}
+          disabled={selectedId === null}
+          title={selectedId === null ? "Open a repository to release it" : "Releases"}
+        >
+          <Tag size={15} strokeWidth={1.5} aria-hidden="true" />
+          Release
+        </button>
+        <button
+          type="button"
           className="button toolbar-stash"
           aria-expanded={stashPanelOpen}
           onClick={() => setStashPanelOpen((v) => !v)}
@@ -535,6 +548,16 @@ export function App() {
             }}
             onSignedIn={() => setSignIn({ authFailure: false })}
             onClose={() => setSignIn(null)}
+          />
+        ) : null}
+
+        {releaseOpen && selectedId !== null ? (
+          <ReleasePanel
+            repoId={selectedId}
+            onChanged={() => void refreshChanges()}
+            onError={reportError}
+            onNote={setNote}
+            onClose={() => setReleaseOpen(false)}
           />
         ) : null}
 

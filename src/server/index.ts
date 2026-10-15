@@ -27,6 +27,17 @@ import {
   pushRepo,
 } from "./git/remote.js";
 import {
+  bumpVersion,
+  listTags,
+  localDate,
+  nextVersion,
+  planRelease,
+  readVersion,
+  renderChangelogSection,
+  tagRelease,
+  writeChangelog,
+} from "./git/release.js";
+import {
   abortOperation,
   continueOperation,
   keepBoth,
@@ -1065,6 +1076,117 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
         ? null
         : "You are signed out of Forgeline. GitHub still lists this app under your authorised OAuth apps, where you can revoke it if you want to.",
     });
+  });
+
+  /* --------------------------------------------------------------- *
+   * Releases (Milestone 8).
+   *
+   * Read-only planning is separate from acting, so the interface can state
+   * exactly what a release will do before there is a button that does it. The
+   * version number is read, never invented.
+   * --------------------------------------------------------------- */
+
+  /** What a release would do. This is read-only and always available. */
+  app.get("/api/repos/:id/release/plan", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const plan = await planRelease(repo.path);
+    const tags = await listTags(repo.path);
+    return c.json({ plan, tags });
+  });
+
+  /**
+   * Put the version in `package.json`, write the changelog, and tag the commit.
+   *
+   * Ordered deliberately: the version first, because `tagRelease` stamps the
+   * commit it is run on and a changelog written *before* the version bump would
+   * have to be amended in. Nothing is committed — the user commits, because
+   * deciding the message is the one part of a release that should not be
+   * automatic.
+   */
+  app.post("/api/repos/:id/release/plan", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ level?: unknown; tag?: unknown; changelog?: unknown }>();
+    const level = body.level;
+    if (level !== "patch" && level !== "minor" && level !== "major") {
+      return c.json({ code: "bad-request", title: "Which size of release?" }, 400);
+    }
+    const tagReleaseIt = body.tag === true;
+    const writeChangelogFile = body.changelog === true;
+    const wantTagName = typeof body.tag === "string" && body.tag.length > 0 ? body.tag : undefined;
+
+    const current = await readVersion(repo.path);
+    if (current === null) {
+      return c.json(
+        {
+          code: "no-version",
+          title: "This repository has no version to release.",
+          explanation:
+            "There is no package.json here, so there is no version number to bump. Add one, or decide the release another way.",
+        },
+        409,
+      );
+    }
+    const next = nextVersion(current, level);
+    if (next === null) {
+      return c.json(
+        {
+          code: "not-semver",
+          title: `Can't work out the next version from ${current}.`,
+          explanation:
+            "This version is not in the three-number form a patch, minor, or major bump can be worked out from, so Forgeline is not going to guess what comes after it. Type the version you want into package.json and it can read it from there.",
+        },
+        409,
+      );
+    }
+
+    const snapshot = await takeSnapshot(repo.path);
+    const bumped = await queue.run(repo.path, () =>
+      journaled(repo.path, `Bumped the version to ${next}`, () => bumpVersion(repo.path, current, next), {
+        undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref },
+      }),
+    );
+    if (!bumped.ok) return gitFailure(c, bumped);
+
+    const written: string[] = ["package.json"];
+    if (writeChangelogFile) {
+      const plan = await planRelease(repo.path);
+      const section = renderChangelogSection(
+        next,
+        plan.commitsSince.map((commit) => commit.subject),
+        localDate(),
+      );
+      const logged = await queue.run(repo.path, () =>
+        journaled(repo.path, `Wrote the ${next} changelog section`, () => writeChangelog(repo.path, "CHANGELOG.md", section), {
+          undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref },
+        }),
+      );
+      if (!logged.ok) return gitFailure(c, logged);
+      written.push("CHANGELOG.md");
+    }
+
+    if (tagReleaseIt || wantTagName !== undefined) {
+      const name = wantTagName ?? `v${next}`;
+      // A tag is stamped on the commit it is made on, and it can be deleted —
+      // but only from this machine, and only until it is pushed. The interface
+      // says so rather than presenting a tag as one more undoable thing.
+      const tagged = await queue.run(repo.path, () =>
+        journaled(repo.path, `Tagged the release as ${name}`, () => tagRelease(repo.path, name, `Release ${next}`), {
+          undoable: false,
+          notUndoableReason:
+            "A tag is a pointer to a commit, and deleting one is the whole of undoing it. It is not offered as an undo because deleting a tag that others have pulled removes it for them too.",
+        }),
+      );
+      if (!tagged.ok) return gitFailure(c, tagged);
+      written.push(name);
+    }
+
+    return c.json({ ok: true, version: next, wrote: written, snapshot: snapshot.ref });
   });
 
   /* --------------------------------------------------------------- *

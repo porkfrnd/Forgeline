@@ -399,3 +399,22 @@ The fix chooses the shape first and reads the name from the right end of it, whi
 The one "bug" that was the test's fault is recorded too: taking "ours" leaves the file identical to what is already committed, so there is nothing to stage and no `M ` code in `git status --porcelain`. The assertion is now "no longer `UU`", which is the actual statement.
 
 suite: 202 unit / 140 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.
+
+## M8 — the release manager, and two guards that were quietly not guarding
+
+**Steps and results:**
+
+1. `src/server/git/release.ts` reads the version from `package.json`, computes the next one, plans a release, and does it: bump the version, write the changelog, tag the commit. Planning and acting are separate endpoints so the interface can state what will happen before a button does it.
+2. `nextVersion` is the only place a version is computed, and it returns `null` rather than a guess for anything that is not the three-number form. A release tool that decided the version for you would be deciding it wrong.
+3. The changelog is sorted into Added / Fixed / Changed from conventional-commit subjects, newest first, written *below the title and above the previous entries*.
+4. Nothing commits. The commit is the user's, because the message is the one part of a release that should not be automatic — and the interface says so, in words, next to the button.
+5. 20 unit and 4 e2e tests.
+
+**Two bugs found, both of them a guard that looked like a guard.**
+
+- **The version guard checked that a version was found, not that it was the one the caller said.** `bumpVersion(from: "9.9.9", to: "1.0.0")` on a file saying `1.2.3` wrote `1.0.0` and reported success. Only the current version is read now, and it must equal `from`.
+- **The changelog section was appended.** `body + new` put `1.2.4` under `1.2.3`, which reads backwards. The heading is found and the section inserted below it.
+
+**And one small thing worth the fix.** `toISOString().slice(0, 10)` dates a changelog in UTC, which on a machine east of Greenwich labels this morning's release yesterday — one day off from every commit timestamp the user just looked at. The date is now local, and the test makes the point by checking 00:30 and 23:30 on the same day land on the same date.
+
+suite: 222 unit / 148 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.

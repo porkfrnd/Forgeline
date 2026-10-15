@@ -798,3 +798,55 @@ export async function abortOperation(repoId: string, operation: string): Promise
     { ok: true } | ActionError
   >;
 }
+
+/** One commit a release would include, with the subject the changelog uses. */
+export interface ReleaseCommit {
+  sha: string;
+  short: string;
+  subject: string;
+}
+
+export interface ReleaseTag {
+  name: string;
+  sha: string;
+  subject: string;
+}
+
+export interface ReleasePlanInfo {
+  currentVersion: string | null;
+  latestTag: string | null;
+  commitsSince: ReleaseCommit[];
+  describe: string;
+  hasChanges: boolean;
+}
+
+export async function readReleasePlan(
+  repoId: string,
+): Promise<{ plan: ReleasePlanInfo; tags: ReleaseTag[] } | ActionError> {
+  const parsed = await readJson(`/api/repos/${encodeURIComponent(repoId)}/release/plan`);
+  if (isActionError(parsed)) return parsed;
+  return {
+    plan: (parsed.plan ?? null) as unknown as ReleasePlanInfo,
+    tags: (parsed.tags ?? []) as ReleaseTag[],
+  };
+}
+
+/**
+ * Make a release: bump the version, optionally write the changelog and tag the
+ * commit.
+ *
+ * Nothing here commits. The user commits, because deciding the message is the
+ * one part of a release that should not be automatic — so a release is stated
+ * as three separate actions the interface does not do for you.
+ */
+export async function makeRelease(
+  repoId: string,
+  level: "patch" | "minor" | "major",
+  options: { changelog: boolean; tag: boolean },
+): Promise<{ ok: true; version?: string; wrote?: string[] } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/release/plan`, {
+    level,
+    changelog: options.changelog,
+    tag: options.tag,
+  }) as Promise<{ ok: true; version?: string; wrote?: string[] } | ActionError>;
+}
