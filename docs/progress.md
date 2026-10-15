@@ -139,3 +139,6 @@ One dated entry per loop run. Never rewrite old entries. Newest entries go at th
 **README:** rewritten from a two-line stub into the real thing — principles, status with an explicit "not published" warning, requirements, run and port rules, how scanning and live updates work, the security model, development commands, layout, and the docs map. Screenshots embedded are from `screenshots/milestone-2/` (see the unverified-by-eye note above).
 
 **Gaps recorded, not fixed:** the polling fallback has no test (new gap 12); settings and the scan cache are still memory-only and want a shared app-data module (gaps 9 and 13); the "Choose folders" button is still static (gap 10).
+
+**Commit:** `13e9856` — `feat(m2): live updates over SSE, per-repo queue, real README`
+**Push:** `git push origin main` succeeded (`e37abc7..13e9856 main -> main`); `git ls-remote origin main` returns `13e9856caafdd2819c4ecf9f9d9d7f2d170baf80`, matching local `main`.
