@@ -76,14 +76,20 @@ flat). Effects Off forces Solid and removes all motion.
 
 ## Status
 
-**Early. Milestone 2 of 9 is complete; Milestone 3 is in progress.** What works
+**Early. Milestones 1–3 are complete; Milestone 4 is in progress.** What works
 today: the dashboard discovers repositories in folders you pick and shows live
 branch, changed-file, and ahead/behind counts, pushed over a local stream as
-files change. The design foundation — themes, surfaces, effects, the Workbench
-shell, and the command palette — is in place.
+files change. The commit flow works end to end — you can see what changed, stage
+and unstage whole files or individual hunks, read both staged and unstaged
+diffs, and commit with a sanity-check card that names every staged file before
+anything is written. Every mutating action is recorded in an action journal
+stored in your OS app-data folder, never inside a repository, and every action
+can show the exact git command behind it.
 
-What does not exist yet: the commit flow, branches, history, and remotes. No
-control is drawn for a feature that is not built, so nothing is a dead button.
+What does not exist yet: the Undo timeline, snapshots, rescue mode, and
+confirmation previews. Branches, history, conflicts, and remotes are not built
+either. No control is drawn for a feature that is not built, so nothing is a
+dead button.
 
 The package has **not** been published to npm, and the name `forgeline` has
 not been checked for availability. Do not treat it as installable yet.
@@ -227,6 +233,9 @@ src/cli.ts                    commander CLI: port rules, startup, clean shutdown
 src/server/index.ts           Hono app: auth, routes, static serving, SSE
 src/server/git/git.ts         the only module that runs git
 src/server/git/diff.ts        changed-file records and unified-diff parsing
+src/server/journal.ts         the action journal, written to app-data
+src/server/snapshots.ts       private refs for pre-action recovery points
+src/server/appdata.ts         resolves the OS app-data folder, never inside a repo
 src/server/scan/              bounded repository discovery
 src/server/live/              file watching with a polling fallback
 src/server/queue.ts           per-repository single-writer queue
@@ -234,6 +243,7 @@ src/shared/types.ts           types shared by server and browser
 src/web/src/theme/families.ts every colour, verified by scripts/check-contrast.mjs
 src/web/src/theme/            ThemeProvider, tokens.css (structure only)
 src/web/src/components/       RepoRail, StatusBar, CommandPalette, AppearancePanel
+src/web/src/app/             App shell, API client, SSE-driven repo list
 docs/                         spec, decisions, design, architecture, status, progress
 ```
 
