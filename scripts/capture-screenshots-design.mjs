@@ -123,7 +123,27 @@ const SHOTS = [
   ["lagoon-dark-narrow", appearance({}), { width: 800, height: 900 }],
   ["lagoon-effects-off", appearance({ effects: "off" }), { width: 1440, height: 900 }],
   ["nord-dark-desktop", appearance({ family: "nord" }), { width: 1440, height: 900 }],
+  // The Undo timeline open, because it is the feature this milestone exists
+  // for and a journal that nobody has seen is indistinguishable from one that
+  // does not exist. Runs last so the journal holds earlier actions from the
+  // session rather than being empty.
+  ["lagoon-journal-open", appearance({}), { width: 1440, height: 900 }, "journal"],
 ];
+
+/** Extra steps that run before the shutter, keyed by the shot's fourth field. */
+const EXTRAS = {
+  // Discard a change through the UI so the timeline has an entry with a
+  // snapshot ref, then open the timeline and expand the command.
+  journal: async (page) => {
+    await page.locator(".file-row").first().getByRole("button", { name: "Discard" }).click();
+    await page.getByRole("button", { name: "Discard changes" }).first().click();
+    await page.waitForTimeout(600);
+    await page.getByRole("button", { name: "Undo timeline" }).click();
+    await page.waitForTimeout(800);
+    await page.locator(".journal .button.link").first().click();
+    await page.waitForTimeout(200);
+  },
+};
 
 try {
   const url = await waitForUrl(server);
@@ -141,7 +161,7 @@ try {
   const browser = await chromium.launch();
   const problemsSeen = [];
 
-  for (const [name, stored, viewport] of SHOTS) {
+  for (const [name, stored, viewport, extra] of SHOTS) {
     const context = await browser.newContext({ viewport });
     // Seed the appearance before any of the app's code runs.
     await context.addInitScript((value) => {
@@ -159,6 +179,9 @@ try {
     // Select the busy repo so the worktable shows a real changed count.
     await page.getByRole("button", { name: /busy-side-project/ }).click();
     await page.waitForTimeout(400);
+    if (extra !== undefined) {
+      await EXTRAS[extra](page);
+    }
     await page.screenshot({ path: join(OUT, `${name}.png`) });
     await context.close();
   }
