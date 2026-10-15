@@ -73,7 +73,8 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 | 2 | Git core: `git.ts` wrapper, parsers, repo scanning, dashboard with live status | done |
 | 3 | Commit flow: file list, hunk staging, diff viewer, commit, sanity check card | done (`milestone-3`) |
 | 4 | Safety: action journal, snapshots, undo timeline, rescue mode, confirmation previews | done (`milestone-4`) |
-| 5 | Error translator with the full starter catalogue | in progress |
+| 5 | Error translator with the full starter catalogue | done (`milestone-5`) |
+| 6 | Remote and sign-in: fetch, pull, push, GitHub device-flow sign-in | in progress |
 | 5 | Error translator with the full starter catalogue | not started |
 | 6 | Remote and sign-in: pull, push, GitHub device flow, lazy prompt | not started |
 | 7 | Branches, stash, history graph, blame, conflict resolver | not started |

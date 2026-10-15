@@ -12,6 +12,7 @@ import { DiffViewer } from "../components/DiffViewer";
 import { CommitComposer } from "../components/CommitComposer";
 import { UndoTimeline } from "../components/UndoTimeline";
 import { ErrorCard } from "../components/ErrorCard";
+import { RemoteBar } from "../components/RemoteBar";
 import { History } from "lucide-react";
 import {
   abortMerge,
@@ -20,6 +21,7 @@ import {
   recordErrorShown,
   recordFixOutcome,
   removeLock,
+  pushRepo,
   setIdentity,
   type ActionError,
 } from "./git.js";
@@ -28,9 +30,9 @@ import {
  * The Workbench shell.
  *
  * Every region shown here has a working feature behind it. The slot rule
- * applies to the whole layout: Fetch, Pull, Push, Branch, Merge, and Stash do
- * not exist yet, so they are not drawn — not as disabled stubs, not as
- * placeholders. They appear when their features meet their exit criteria and
+ * applies to the whole layout: Branch, Merge, and Stash do not exist yet, so
+ * they are not drawn — not as disabled stubs, not as placeholders. They appear
+ * when their features meet their exit criteria and
  * not before.
  */
 export function App() {
@@ -119,10 +121,15 @@ export function App() {
         return;
       }
 
+      // Publishing a branch is the only fix here that talks to a remote, so it
+      // is also the only one that can fail for a reason Forgeline cannot
+      // repair — an unreachable host, a refused credential — and those come
+      // back as a new card rather than a success.
       const call =
         fixId === "init-here" ? initRepo(selectedId)
         : fixId === "abort-merge" ? abortMerge(selectedId)
         : fixId === "remove-lock" ? removeLock(selectedId)
+        : fixId === "push-set-upstream" ? pushRepo(selectedId, { setUpstream: true })
         : null;
 
       if (call === null) {
@@ -184,6 +191,7 @@ export function App() {
    */
   const AVAILABLE_FIXES = [
     "init-here",
+    "push-set-upstream",
     "commit-first",
     "abort-merge",
     "remove-lock",
@@ -420,6 +428,16 @@ export function App() {
               </p>
             ) : null}
           </section>
+        ) : null}
+
+        {selected !== null ? (
+          <RemoteBar
+            repoId={selectedId}
+            ahead={selected.ahead}
+            behind={selected.behind}
+            onChanged={() => void refreshChanges()}
+            onError={reportError}
+          />
         ) : null}
 
         <section className="panel worktable" data-ticks>

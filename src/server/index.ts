@@ -18,6 +18,12 @@ import {
 } from "./git/diff.js";
 import { journaled, undoCommand } from "./journal.js";
 import { takeSnapshot } from "./snapshots.js";
+import {
+  fetchRepo,
+  listRemotes,
+  pullRepo,
+  pushRepo,
+} from "./git/remote.js";
 import { resolveRealpath, stillInside } from "./paths.js";
 import { readJson, writeJson } from "./appdata.js";
 import { readJournal } from "./journal.js";
@@ -38,12 +44,30 @@ export const MAX_FILE_PREVIEW_BYTES = 1024 * 1024;
  *  but git sends some failures to stdout — a merge conflict and "nothing to
  *  commit" both do — so the translator is handed the combination of the two,
  *  which is what a person reading the terminal would have seen. */
+/** Codes that mean "the other end could not be reached or would not let us in".
+ *  These are the repository's trouble with something outside it, not the
+ *  repository's own state. */
+const REMOTE_FAULT_CODES = new Set([
+  "remote-unreachable",
+  "remote-auth",
+  "remote-not-found",
+  "ssh-key",
+  "host-key",
+  "no-remote",
+  "remote-exists",
+]);
+
 function gitFailure(c: Context, res: GitResult) {
   const forge = translateError(`${res.stdout}\n${res.stderr}`, res.command);
-  // 409 for conflict-shaped errors, 500 otherwise. The card is the same
-  // either way; the status only tells a caller whether retrying could help.
-  const status =
-    forge.code === "merge-conflict" || forge.code === "merge-in-progress" ? 409 : 500;
+  // The card is identical either way; the status tells a caller what kind of
+  // trouble it is. 409 for "the repository's own state does not permit this",
+  // which is nearly every case — a lock held, a merge in progress, no upstream
+  // yet, nothing to commit — and 502 when the fault is the far end, so a
+  // client can tell "retrying the same thing may help" from "try again later".
+  // 500 was never right: there is nothing broken inside Forgeline, and saying
+  // so put a red "Internal Server Error" in the browser console next to a card
+  // that had already explained the problem in plain English.
+  const status = REMOTE_FAULT_CODES.has(forge.code) ? 502 : 409;
   return c.json({ ...forge, ok: false }, status);
 }
 
@@ -826,6 +850,106 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
   // ("watching" or the polling fallback) and pushes a full snapshot; after
   // that it pushes only the repos whose .git bookkeeping files changed, so a
   // `git checkout` is one small frame rather than a full reload.
+  /* --------------------------------------------------------------- *
+   * Remotes (Milestone 6). Fetch, pull, push.
+   *
+   * None of these needs a Forgeline account: a remote that already works
+   * through SSH keys on the machine, or a public HTTPS one, just works. An
+   * authentication failure comes back as a translator card, and that card is
+   * what offers sign-in — which is how sign-in stays lazy.
+   * --------------------------------------------------------------- */
+
+  /** What the repository's remotes point at. */
+  app.get("/api/repos/:id/remotes", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    return c.json({ remotes: await listRemotes(repo.path) });
+  });
+
+  /**
+   * Fetch. Journaled because it is an action the user took, and non-undoable
+   * because it changes no local ref: it only downloads objects, so there is
+   * literally nothing to restore.
+   */
+  app.post("/api/repos/:id/fetch", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ remote?: unknown }>().catch(() => ({}) as { remote?: unknown });
+    const remote = typeof body.remote === "string" ? body.remote : undefined;
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        remote === undefined ? "Fetched from the remote" : `Fetched from ${remote}`,
+        () => fetchRepo(repo.path, { remote, prune: true }),
+        {
+          undoable: false,
+          notUndoableReason:
+            "A fetch only downloads objects from the remote. It moves no commit and no branch, so there is nothing to undo.",
+        },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, changed: result.changed, output: result.output });
+  });
+
+  /**
+   * Pull. Journaled with a snapshot, because a pull can move the current
+   * branch and can even create a merge commit — both of which a snapshot puts
+   * back exactly.
+   */
+  app.post("/api/repos/:id/pull", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const snapshot = await queue.run(repo.path, () => takeSnapshot(repo.path));
+    const body = await c.req.json<{ remote?: unknown }>().catch(() => ({}) as { remote?: unknown });
+    const remote = typeof body.remote === "string" ? body.remote : undefined;
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        remote === undefined ? "Pulled from the remote" : `Pulled from ${remote}`,
+        () => pullRepo(repo.path, { remote }),
+        { undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref } },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, changed: result.changed, output: result.output, snapshot: snapshot.ref });
+  });
+
+  /**
+   * Push. Journaled as irreversible, which is the recovery contract's own word
+   * for it: once the commits are on the remote, withdrawing them would mean
+   * rewriting history other people may already have.
+   */
+  app.post("/api/repos/:id/push", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ remote?: unknown; setUpstream?: unknown }>();
+    const remote = typeof body.remote === "string" ? body.remote : undefined;
+    const setUpstream = body.setUpstream === true;
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        setUpstream ? "Published this branch to the remote" : "Pushed to the remote",
+        () => pushRepo(repo.path, { remote, setUpstream }),
+        {
+          undoable: false,
+          notUndoableReason:
+            "A push publishes commits to the remote. Taking them back would rewrite history that other people may already have, so Forgeline will not do it for you.",
+        },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, changed: result.changed, output: result.output });
+  });
+
   /* --------------------------------------------------------------- *
    * Error fixes (Milestone 5).
    *

@@ -76,7 +76,7 @@ flat). Effects Off forces Solid and removes all motion.
 
 ## Status
 
-**Early. Milestones 1–5 are complete.** What works today: the dashboard
+**Early. Milestones 1–6 are underway.** What works today: the dashboard
 discovers repositories in folders you pick and shows live branch,
 changed-file, and ahead/behind counts, pushed over a local stream as files
 change. The commit flow works end to end — you can see what changed, stage
@@ -100,9 +100,9 @@ rather than showing a button that would do nothing. Forgeline also keeps a
 local record of which fixes actually worked, so a remedy that has never helped
 stops being offered first.
 
-What does not exist yet: branches, stash, history, conflicts, remotes, and the
-release manager. No control is drawn for a feature that is not built, so
-nothing is a dead button.
+What does not exist yet: branches, stash, history, conflicts, and the release
+manager. No control is drawn for a feature that is not built, so nothing is a
+dead button.
 
 **The Undo timeline**, with the saved snapshot and the command behind it:
 

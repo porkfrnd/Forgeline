@@ -712,3 +712,20 @@ body {
 /* The identity form the "set name and email" fix opens. */
 .identity-form { display: flex; flex-direction: column; gap: 8px; }
 .identity-form .input { width: 100%; }
+
+/* ---------- remote bar (Milestone 6) ---------- */
+.work-remote {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.remote-counts {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.work-remote .message {
+  flex-basis: 100%;
+}

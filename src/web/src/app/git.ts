@@ -366,10 +366,73 @@ export function hunkToPatch(
   return out.join("\n") + "\n";
 }
 
+/** One path under `/api/repos/<id>/…`. Every repo-scoped call goes through
+ *  here, so the encodeURIComponent never gets forgotten in a new one. */
+function repoEndpoint(repoId: string, tail: string): string {
+  return `/api/repos/${encodeURIComponent(repoId)}/${tail}`;
+}
+
 export interface DiffLine {
   kind: "add" | "del" | "context";
   text: string;
   oldLine: number | null;
   newLine: number | null;
   noEol: boolean;
+}
+
+/** A remote, as `git remote -v` describes it. */
+export interface RemoteInfo {
+  name: string;
+  fetch: string;
+  push: string;
+}
+
+/** The remotes a repository has. Empty is a normal state — a local repository
+ *  with no remote is a perfectly good thing to be. */
+export async function listRemotes(repoId: string): Promise<RemoteInfo[]> {
+  const res = await fetch(`${repoEndpoint(repoId, "remotes")}`);
+  const parsed = (await res.json().catch(() => ({}))) as { remotes?: RemoteInfo[] };
+  return parsed.remotes ?? [];
+}
+
+/** What a fetch, pull, or push reported. `output` never contains a credential:
+ *  git does not print the askpass answer, so nothing to strip. */
+export interface RemoteOutcome {
+  ok: true;
+  /** True when refs actually moved. */
+  changed: boolean;
+  output: string;
+  snapshot?: string;
+}
+
+/** Discriminate a translator error from a success, so callers get the narrow
+ *  type rather than a cast. */
+export function isActionError(v: unknown): v is ActionError {
+  return typeof v === "object" && v !== null && (v as ActionError).ok === false;
+}
+
+export async function fetchRepo(
+  repoId: string,
+  opts: { remote?: string } = {},
+): Promise<RemoteOutcome | ActionError> {
+  const outcome = await actionJson(repoEndpoint(repoId, "fetch"), opts);
+  return outcome as RemoteOutcome | ActionError;
+}
+
+/** Pull: fetch and merge. Merging is chosen on the user's side, not git's. */
+export async function pullRepo(
+  repoId: string,
+  opts: { remote?: string } = {},
+): Promise<RemoteOutcome | ActionError> {
+  const outcome = await actionJson(repoEndpoint(repoId, "pull"), opts);
+  return outcome as RemoteOutcome | ActionError;
+}
+
+/** Push. `setUpstream` publishes a branch that has never been pushed. */
+export async function pushRepo(
+  repoId: string,
+  opts: { remote?: string; setUpstream?: boolean } = {},
+): Promise<RemoteOutcome | ActionError> {
+  const outcome = await actionJson(repoEndpoint(repoId, "push"), opts);
+  return outcome as RemoteOutcome | ActionError;
 }

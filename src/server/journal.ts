@@ -100,17 +100,17 @@ export function makeJournalId(): string {
  *  `undoable` defaults to true because every action Forgeline currently
  *  performs has a local reverse. Milestone 4's later slices narrow that per
  *  action as recovery tests pass; a remote-reaching action passes false. */
-export async function journaled(
+export async function journaled<T extends GitRun>(
   repoPath: string,
   description: string,
-  run: () => Promise<GitRun>,
+  run: () => Promise<T>,
   opts: {
     undoable?: boolean;
     notUndoableReason?: string;
     undo?: UndoPlan;
     snapshotRef?: string;
   } = {},
-): Promise<GitRun> {
+): Promise<T> {
   const before = await readRefs(repoPath);
   const result = await run();
   // Even a failed action may have partly applied, so the after-refs are read

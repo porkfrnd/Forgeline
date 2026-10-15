@@ -1276,3 +1276,253 @@ test.describe("Milestone 5 error translator", () => {
     await expect(page.locator(".error-card")).toHaveCount(0);
   });
 });
+/**
+ * Milestone 6: remote operations.
+ *
+ * The remote in these tests is a real bare repository on disk, so fetch, pull,
+ * and push each run real git against a real remote — no network, no mock, and
+ * no fake adapter that could disagree with git.
+ */
+
+/** A bare repository needs a working tree to make a commit in, so the seed is
+ *  made in a throwaway clone and pushed. That also means the bare remote
+ *  really has a branch for the UI to be level with. */
+function seedBare(bare: string, root: string): void {
+  const seed = `${bare}-seed`;
+  mkdirSync(seed, { recursive: true });
+  const clone = spawnSync("git", ["clone", "-q", bare, seed], { cwd: root, encoding: "utf8" });
+  if (clone.status !== 0) throw new Error(`seed clone failed: ${clone.stderr}`);
+  writeFileSync(join(seed, "seed.txt"), "seed\n");
+  spawnSync("git", ["add", "-A"], { cwd: seed });
+  spawnSync("git", ["commit", "-q", "-m", "Seed"], { cwd: seed });
+  const push = spawnSync("git", ["push", "-q", "-u", "origin", "HEAD"], {
+    cwd: seed,
+    encoding: "utf8",
+  });
+  if (push.status !== 0) throw new Error(`seed push failed: ${push.stderr}`);
+  rmSync(seed, { recursive: true, force: true });
+}
+
+/** A bare remote plus one real clone of it, registered with the server. */
+async function makeRemotePair(baseUrl: string, cookie: string, name: string) {
+  const root = mkdtempSync(join(tmpdir(), `fl-e2e-remote-${name}-`));
+  const remote = join(root, "remote.git");
+  mkdirSync(remote, { recursive: true });
+  const init = spawnSync("git", ["init", "-q", "--bare", "-b", "main", "."], {
+    cwd: remote,
+    encoding: "utf8",
+  });
+  if (init.status !== 0) throw new Error(`bare init failed: ${init.stderr}`);
+  seedBare(remote, root);
+
+  const dir = join(root, "demo");
+  const clone = spawnSync("git", ["clone", "-q", remote, dir], { cwd: root, encoding: "utf8" });
+  if (clone.status !== 0) throw new Error(`clone failed: ${clone.stderr}`);
+
+  await setRootsForTest(baseUrl, [root]);
+  const id = await registerRepoForTest(baseUrl, cookie, dir);
+  return { root, remote, dir, id };
+}
+
+/**
+ * A JSON API call that goes through the same cookie every other test uses.
+ *
+ * The body is `unknown` on purpose: these tests assert on what git really
+ * returned, and a typed shape would let a test pass against a property that
+ * does not exist. Each test narrows what it needs.
+ */
+async function call(
+  baseUrl: string,
+  cookie: string,
+  path: string,
+  method: "GET" | "POST" = "GET",
+  body?: unknown,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers: { "content-type": "application/json", Cookie: cookie },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const parsed: unknown = await res.json().catch(() => ({}));
+  return { status: res.status, body: (parsed ?? {}) as Record<string, unknown> };
+}
+
+test.describe("Milestone 6 remote operations", () => {
+  test("a repository with no remote shows no remote actions at all", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root } = await makeAnonymousRepo(baseUrl, cookie, "no-remote");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.waitForSelector(".rail-row");
+      await page.waitForTimeout(800);
+      // The slot rule: no disabled Fetch/Pull/Push buttons pretending to work.
+      await expect(page.locator(".work-remote")).toHaveCount(0);
+    } finally {
+      await call(baseUrl, cookie, "/api/__test__/roots", "POST", { paths: [] }).catch(() => {});
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a repository with a remote shows actions that do something", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root } = await makeRemotePair(baseUrl, cookie, "bar-present");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.waitForSelector(".rail-row");
+      await page.waitForTimeout(800);
+      const bar = page.locator(".work-remote");
+      await expect(bar).toHaveCount(1);
+      await expect(bar.getByRole("button", { name: "Fetch" })).toBeVisible();
+      await expect(bar.getByRole("button", { name: "Pull" })).toBeVisible();
+      await expect(bar.getByRole("button", { name: "Push" })).toBeVisible();
+      // Level with the remote, honestly.
+      await expect(bar).toContainText("level with the remote");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fetch, pull and push each report honestly what they did", async () => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, id } = await makeRemotePair(baseUrl, cookie, "honest");
+
+    try {
+      // Nothing new on either side, so each action must say "nothing changed"
+      // rather than claiming an update.
+      const fetched = await call(baseUrl, cookie, `/api/repos/${id}/fetch`, "POST", {});
+      expect(fetched.body.ok).toBe(true);
+      expect(fetched.body.changed).toBe(false);
+
+      const pulled = await call(baseUrl, cookie, `/api/repos/${id}/pull`, "POST", {});
+      expect(pulled.body.ok).toBe(true);
+      expect(pulled.body.changed).toBe(false);
+
+      const pushed = await call(baseUrl, cookie, `/api/repos/${id}/push`, "POST", {});
+      expect(pushed.body.ok).toBe(true);
+      expect(pushed.body.changed).toBe(false);
+
+      // All three are journalled, which is what makes them undoable.
+      const journal = await call(baseUrl, cookie, "/api/journal");
+      const descriptions = (journal.body.entries as { description: string }[]).map(
+        (e) => e.description,
+      );
+      expect(descriptions).toContain("Fetched from the remote");
+      expect(descriptions).toContain("Pulled from the remote");
+      expect(descriptions).toContain("Pushed to the remote");
+
+      // The recovery contract's split, made real: a pull can be undone, a push
+      // cannot — and it says why.
+      const entries = journal.body.entries as {
+        description: string;
+        undoable: boolean;
+        notUndoableReason?: string;
+      }[];
+      const pullEntry = entries.find((e) => e.description.startsWith("Pulled"));
+      const pushEntry = entries.find((e) => e.description.startsWith("Pushed"));
+      expect(pullEntry?.undoable).toBe(true);
+      expect(pushEntry?.undoable).toBe(false);
+      expect(pushEntry?.notUndoableReason).toContain("rewrite history");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("pulling brings the remote's work into the working tree", async () => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, remote, dir, id } = await makeRemotePair(baseUrl, cookie, "pull-lands");
+
+    try {
+      // A second clone pushes work this repository has never seen.
+      const other = join(root, "other");
+      spawnSync("git", ["clone", "-q", remote, other], { cwd: root });
+      writeFileSync(join(other, "theirs.txt"), "their line\n");
+      spawnSync("git", ["add", "-A"], { cwd: other });
+      spawnSync("git", ["commit", "-q", "-m", "their change"], { cwd: other });
+      const theirs = spawnSync("git", ["push", "-q", "origin", "HEAD"], { cwd: other });
+      expect(theirs.status).toBe(0);
+
+      const before = spawnSync("git", ["log", "--format=%s"], { cwd: dir, encoding: "utf8" });
+      expect(before.stdout).not.toContain("their change");
+
+      const res = await call(baseUrl, cookie, `/api/repos/${id}/pull`, "POST", {});
+      expect(res.body.ok).toBe(true);
+      expect(res.body.changed).toBe(true);
+
+      // Not just in the object store — in the working tree, where the user
+      // would look for it.
+      expect(existsSync(join(dir, "theirs.txt"))).toBe(true);
+      const after = spawnSync("git", ["log", "--format=%s"], { cwd: dir, encoding: "utf8" });
+      expect(after.stdout).toContain("their change");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a push the remote refuses comes back as a card, not a crash", async () => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, remote, id } = await makeRemotePair(baseUrl, cookie, "rejected");
+
+    try {
+      // Another clone pushes first, so this one is genuinely behind and its
+      // push must be refused — the translator's push-rejected case.
+      const other = join(root, "other");
+      spawnSync("git", ["clone", "-q", remote, other], { cwd: root });
+      writeFileSync(join(other, "other.txt"), "theirs\n");
+      spawnSync("git", ["add", "-A"], { cwd: other });
+      spawnSync("git", ["commit", "-q", "-m", "theirs"], { cwd: other });
+      const theirs = spawnSync("git", ["push", "-q", "origin", "HEAD"], { cwd: other });
+      expect(theirs.status).toBe(0);
+
+      const rejected = await call(baseUrl, cookie, `/api/repos/${id}/push`, "POST", {});
+      expect(rejected.body.ok).toBe(false);
+      expect(rejected.body.code).toBe("push-rejected");
+      // The card carries git's real words, which is the whole point of it.
+      expect(String(rejected.body.raw)).toContain("fetch first");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("publishing an unpublished branch works from the card's own button", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, remote, dir } = await makeRemotePair(baseUrl, cookie, "publish");
+
+    try {
+      // Removing the tracking makes the branch unpublished, which is the state
+      // a first-time push hits and the only one this card is for.
+      spawnSync("git", ["branch", "--unset-upstream"], { cwd: dir });
+
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.waitForSelector(".rail-row");
+      await page.waitForTimeout(600);
+      const bar = page.locator(".work-remote");
+      await expect(bar).toHaveCount(1);
+
+      await bar.getByRole("button", { name: "Push" }).click();
+      const card = page.locator(".error-card");
+      await expect(card).toHaveCount(1);
+      await expect(card.locator(".error-title")).toHaveText(
+        "This branch isn't published anywhere.",
+      );
+      const fix = card.locator(".error-fixes button");
+      await expect(fix).toHaveCount(1);
+      await expect(fix).toHaveText("Publish this branch");
+
+      // Pressing it must really publish — a ref that only git can confirm.
+      await fix.click();
+      await expect(page.locator(".error-card")).toHaveCount(0, { timeout: 10000 });
+      const refs = spawnSync("git", ["for-each-ref"], { cwd: remote, encoding: "utf8" });
+      expect(refs.stdout).toContain("refs/heads/main");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
