@@ -10,7 +10,18 @@ export interface GitResult {
 export interface RunGitOptions {
   cwd: string;
   env?: Record<string, string>;
+  /** Kill the process after this long. Defaults to PATIENCE_MS; network
+   *  operations pass a longer IMPATIENCE_MS. */
+  timeoutMs?: number;
 }
+
+/** Long enough for a big local repo, short enough that a hung `status` never
+ *  wedges the dashboard. Local git has no business taking longer. */
+const PATIENCE_MS = 15_000;
+/** Fetch and push talk to another machine. Give them room. */
+const IMPATIENCE_MS = 120_000;
+
+export const GIT_TIMEOUTS = { PATIENCE_MS, IMPATIENCE_MS };
 
 const BASE_ENV: Record<string, string> = {
   LC_ALL: "C",
@@ -23,6 +34,7 @@ export function runGit(
   opts: RunGitOptions,
 ): Promise<GitResult> {
   const command = `git ${args.join(" ")}`;
+  const timeoutMs = opts.timeoutMs ?? PATIENCE_MS;
   return new Promise((resolve) => {
     const child = spawn("git", args, {
       cwd: opts.cwd,
@@ -30,6 +42,19 @@ export function runGit(
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const finish = (result: GitResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      // Git reports this itself rather than letting it look like a crash.
+      stderr += `${stderr.length > 0 ? "\n" : ""}git timed out after ${timeoutMs}ms`;
+      child.kill("SIGKILL");
+      finish({ stdout, stderr, exitCode: 124, command });
+    }, timeoutMs);
     child.stdout.on("data", (d: Buffer) => {
       stdout += d.toString("utf8");
     });
@@ -37,12 +62,20 @@ export function runGit(
       stderr += d.toString("utf8");
     });
     child.on("error", (err: Error) => {
-      resolve({ stdout, stderr: `${stderr}${err.message}`, exitCode: 127, command });
+      finish({ stdout, stderr: `${stderr}${err.message}`, exitCode: 127, command });
     });
     child.on("close", (code: number | null) => {
-      resolve({ stdout, stderr, exitCode: code ?? 1, command });
+      finish({ stdout, stderr, exitCode: code ?? 1, command });
     });
   });
+}
+
+/** `--` before path arguments, so a path beginning with `-` can never be
+ *  read as an option. Every call that passes a path builds its args through
+ *  here rather than concatenating. */
+export function withPaths(before: string[], paths: string[]): string[] {
+  if (paths.length === 0) return before;
+  return [...before, "--", ...paths];
 }
 
 export interface AheadBehind {

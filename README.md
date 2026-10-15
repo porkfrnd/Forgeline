@@ -1,15 +1,24 @@
 # Forgeline
 
-A calm, visual way to manage every git repository on your computer.
+A visual way to manage every git repository on your computer, built to look
+like an instrument panel rather than a dashboard template.
 
 Forgeline installs as an npm package, starts from your terminal, and opens a
 local web interface on `127.0.0.1`. It is a visual layer over the real git
 CLI — it never reimplements git, and every action can show you the exact
 command it ran.
 
-![Forgeline dashboard, paper theme](screenshots/milestone-2/dashboard-paper-desktop.png)
+**Lagoon, the default**
 
-![Forgeline dashboard, midnight theme](screenshots/milestone-2/dashboard-midnight-desktop.png)
+![Forgeline in Lagoon dark](screenshots/design/lagoon-dark-desktop.png)
+
+**Cathode — amber CRT warmth**
+
+![Forgeline in Cathode dark](screenshots/design/cathode-dark-desktop.png)
+
+**Paper — light and quiet**
+
+![Forgeline in Paper light](screenshots/design/paper-light-desktop.png)
 
 ## What it is for
 
@@ -35,14 +44,46 @@ These are not aspirations; they are constraints the code is held to.
   snapshot first. Undo is offered only where recovery is proven by tests;
   everything else says plainly that it cannot be undone, and why.
 - **Explain, don't hide.** Every action can show the command behind it.
-- **Looks hand-designed.** Restrained, consistent, calm. Two themes, one
-  accent colour, thin borders, and motion only for state changes.
+- **Looks hand-designed.** An instrument panel, not a dashboard template:
+  layered surfaces, hairlines, registration ticks, and a heat ramp where
+  recent work runs hot and old work runs cold. Every glow, gradient, and
+  texture has to encode information or help orientation, or it is deleted.
+
+## Themes
+
+Appearance has two controls: a **family** (the palette) and a **mode** (dark
+or light). A family that does not support a mode says so rather than offering
+a broken one. Effects — motion, glow, blur, grain — have their own control,
+defaulting from your system's reduced-motion setting, and can be turned off
+entirely without losing any information.
+
+| Family | Modes | |
+| --- | --- | --- |
+| Lagoon | Dark, Light | The default. Teal and cyan, glass panels |
+| Cathode | Dark, Light | Amber CRT warmth: warm black, orange phosphor |
+| Paper | Dark, Light | Neutral, GitHub-like, quiet blue accent |
+| Mono | Dark, Light | Black and white, hairlines only |
+| Dracula | Dark | |
+| Nord | Dark | |
+| Phosphor | Dark | Hidden, not in the picker |
+
+Surfaces are Glass (translucent, ambient gradient, blur) or Solid (opaque and
+flat). Effects Off forces Solid and removes all motion.
+
+![Nord](screenshots/design/nord-dark-desktop.png)
+
+![Effects off](screenshots/design/lagoon-effects-off.png)
 
 ## Status
 
-**Early. Milestone 2 of 9.** The dashboard is real — it discovers repositories
-in folders you pick and shows live branch, changed-file, and ahead/behind
-counts. Committing, branches, history, and remotes are not built yet.
+**Early. Milestone 2 of 9 is complete; Milestone 3 is in progress.** What works
+today: the dashboard discovers repositories in folders you pick and shows live
+branch, changed-file, and ahead/behind counts, pushed over a local stream as
+files change. The design foundation — themes, surfaces, effects, the Workbench
+shell, and the command palette — is in place.
+
+What does not exist yet: the commit flow, branches, history, and remotes. No
+control is drawn for a feature that is not built, so nothing is a dead button.
 
 The package has **not** been published to npm, and the name `forgeline` has
 not been checked for availability. Do not treat it as installable yet.
@@ -175,21 +216,25 @@ npx playwright install chromium
 To refresh the screenshots above, with `npm run build` already done:
 
 ```
-node scripts/capture-screenshots-m2.mjs
+node scripts/capture-screenshots-design.mjs   # the themes shown above
+node scripts/capture-screenshots-m2.mjs       # the earlier milestone-2 set
 ```
 
 ## Layout
 
 ```
-src/cli.ts              commander CLI: port rules, startup, clean shutdown
-src/server/index.ts     Hono app: auth, routes, static serving, SSE
-src/server/git/         the single git wrapper and its parsers
-src/server/scan/        bounded repository discovery
-src/server/live/        file watching with a polling fallback
-src/server/queue.ts     per-repository single-writer queue
-src/shared/types.ts     types shared by server and browser
-src/web/src/            React interface and design tokens
-docs/                   spec, decisions, architecture, status, progress
+src/cli.ts                    commander CLI: port rules, startup, clean shutdown
+src/server/index.ts           Hono app: auth, routes, static serving, SSE
+src/server/git/git.ts         the only module that runs git
+src/server/git/diff.ts        changed-file records and unified-diff parsing
+src/server/scan/              bounded repository discovery
+src/server/live/              file watching with a polling fallback
+src/server/queue.ts           per-repository single-writer queue
+src/shared/types.ts           types shared by server and browser
+src/web/src/theme/families.ts every colour, verified by scripts/check-contrast.mjs
+src/web/src/theme/            ThemeProvider, tokens.css (structure only)
+src/web/src/components/       RepoRail, StatusBar, CommandPalette, AppearancePanel
+docs/                         spec, decisions, design, architecture, status, progress
 ```
 
 ## Documentation
