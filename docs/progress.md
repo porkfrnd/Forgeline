@@ -202,3 +202,34 @@ One dated entry per loop run. Never rewrite old entries. Newest entries go at th
 
 **Commit:** `6012010` — `feat(server): parse changed-file records and unified diffs`.
 **Push:** `git push origin main` succeeded (`b44f0fd..6012010 main -> main`); `git ls-remote origin main` matches local `main`.
+
+---
+
+## 2026-10-15 — Milestone 3 (commit flow): staging, hunk toggling, commit composer
+
+**Slice:** Milestone 3, the full commit flow, built on the diff parser and pushed to the gate tag.
+
+**Context:** M3.1 gave us a trustworthy changed-file list and unified-diff parser with no write path and no UI. The user said "continue working," so the remaining three slices ran in sequence.
+
+**Plan (checklist):**
+- [x] M3.2 — stage/unstage whole files, stage/unstage a single hunk.
+- [x] M3.3 — diff viewer rendering numbered hunks with +/- prefixes.
+- [x] M3.4 — commit composer, commit action, sanity-check card.
+- [x] M3 gate — full verify, tag, push.
+
+**Steps and results:**
+1. Work — `runGit` gained an optional stdin pipe so `git apply` can consume a hunk patch rather than a temp file. Four write endpoints plus two read endpoints (`/changes`, `/diff`), all serialised per repo through `RepoQueue`, all validating the path against the registry before git runs, all putting paths behind `--`.
+2. Static check — `typecheck` clean. Two fixes along the way: standalone Hono route helpers needed an explicit `Context` parameter type (Hono infers it for inline handlers but not for extracted functions), and `c.req.param("id")` is `string | undefined`, so every extracted helper takes an explicit `if (!id) return c.notFound();`.
+3. Typecheck also caught two frontend mistakes worth recording: my new components sat in `src/web/src/components/` but imported from `./git.js` instead of `../app/git.js`, and I used CSS variables that do not exist as theme tokens (`--panel-hover`, `--font-mono`, `--text-muted`, `--heat-3`). Colour in this project comes from `families.ts` and reaches CSS as custom properties set by `ThemeProvider`; anything not in that file has to be spelled out.
+4. Unit test — `vitest run`: 72 passed (unchanged; the new logic is HTTP-level and is covered by e2e).
+5. Browser test — `playwright test`: 52 passed, up from 40. Six new tests, each at desktop (1440px) and narrow (800px).
+6. Record and commit — see below.
+
+**The interesting bug — a leak, not a crash.** All 26 desktop tests passed. Every narrow test after the first M3 test then failed: "No folders scanned yet." was gone, and the SSE test saw *two* repos both named `demo`. The cause was in my own new test "write paths reject a forged repo id and an escaping path": it called `makeCommitRepo` (which registers a repo server-side) and never deleted the temp directory. Because e2e runs both viewport projects against one long-lived server, that live repo stayed registered for every later test in the narrow pass. The tests were not racing; they were remembering. Fixed with a `try/finally` cleanup, and the reason is now a comment on that `finally` block so the next person does not repeat it. Two of the failures it caused were in tests I had not touched, which is exactly why the leak was worth chasing rather than working around.
+
+**New tests (e2e):** changes/diff report real working-tree state; stage → commit → clean worktree proven via `git log`; an empty commit message is 400 and writes nothing; a single hunk staged through `git apply --cached`; a forged repo id 404s and an escaping path 400s before git runs; the workbench lists the file, stages it, shows the composer naming the staged file, refuses an empty message, and commits.
+
+**Slot rule applied:** Pull, Push, Fetch, Branch, Merge and Stash are still absent from the interface — not disabled, not stubbed. Stage, unstage, and commit exist because their features do.
+
+**Commit:** `aee647a` — `feat(m3.2): stage and unstage, including hunk toggling`; `06ad8a3` — `feat(m3.4): commit composer, commit action, sanity-check card`.
+**Push:** both to `main`; `git tag milestone-3` pushed as the gate.

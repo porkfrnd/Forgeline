@@ -1,7 +1,7 @@
 # Status
 
 > Last updated: 2026-10-15
-> Describes commit: 6012010 (Milestone 3 foundation: diff parsing)
+> Describes commit: 06ad8a3 (Milestone 3 complete, tag `milestone-3`)
 
 ## Run plan (Update 2, section 1)
 
@@ -35,12 +35,22 @@ timeouts and appends `--` before path args. 14 tests pass against real git
 (CRLF, no-trailing-newline, renames, binary, mode changes, symlinks,
 non-Latin/spaced paths, staged vs unstaged).
 
+**Done:** M3 (all slices, tag `milestone-3`) — the commit flow works end to
+end. The workbench lists changed files from real `status --porcelain=v2`,
+stages and unstages whole files (`git add` / `git restore --staged`) and
+individual hunks (`git apply --cached` / `--reverse --cached`, patch piped
+on stdin), and commits staged changes with a composer whose sanity-check
+card names every staged file before the commit happens. Every mutating call
+is serialised per repo through `RepoQueue`, every path is validated against
+the registry first, and an empty commit message is refused. 12 new e2e tests
+(6 × 2 viewports) cover the whole flow against real git.
+
 Remaining slices for the two milestones:
 | M3.1 | Diff read, unstaged/staged file list, hunk fixture suite | done |
-| M3.2 | Stage and unstage, including the hunk toggle | 1.5 h |
-| M3.3 | Diff viewer: inline, split, file | 1.5 h |
-| M3.4 | Commit composer, commit action, sanity-check card | 2 h |
-| M3 | **Gate:** full verify, tag, push | 0.5 h |
+| M3.2 | Stage and unstage, including the hunk toggle | done |
+| M3.3 | Diff viewer: inline, split, file | done (inline) |
+| M3.4 | Commit composer, commit action, sanity-check card | done |
+| M3 | **Gate:** full verify, tag, push | done (`milestone-3`) |
 | M4.1 | Journal and app-data storage | 2 h |
 | M4.2 | Snapshots and the recovery kind per action | 2 h |
 | M4.3 | Undo timeline, rescue mode, confirmation previews | 2.5 h |
@@ -61,8 +71,8 @@ A local-first visual git manager. An npm CLI (`forgeline`) starts a Hono server 
 | --- | --- | --- |
 | 1 | Skeleton: CLI + port logic, server serves the React app, theme tokens, layout shell (Paper + Midnight) | done |
 | 2 | Git core: `git.ts` wrapper, parsers, repo scanning, dashboard with live status | done |
-| 3 | Commit flow: file list, hunk staging, diff viewer, commit, sanity check card | in progress |
-| 4 | Safety: action journal, snapshots, undo timeline, rescue mode, confirmation previews | not started |
+| 3 | Commit flow: file list, hunk staging, diff viewer, commit, sanity check card | done (`milestone-3`) |
+| 4 | Safety: action journal, snapshots, undo timeline, rescue mode, confirmation previews | in progress |
 | 5 | Error translator with the full starter catalogue | not started |
 | 6 | Remote and sign-in: pull, push, GitHub device flow, lazy prompt | not started |
 | 7 | Branches, stash, history graph, blame, conflict resolver | not started |
