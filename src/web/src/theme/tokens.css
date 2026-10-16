@@ -146,7 +146,7 @@ body {
 }
 
 .sidebar { grid-area: sidebar; border-right: var(--hairline-w) solid var(--hairline); overflow-y: auto; }
-.toolbar { grid-area: toolbar; border-bottom: var(--hairline-w) solid var(--hairline); }
+.toolbar { grid-area: toolbar; border-bottom: var(--hairline-w) solid var(--hairline); min-width: 0; }
 .work { grid-area: work; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
 .statusbar { grid-area: status; border-top: var(--hairline-w) solid var(--hairline); }
 
@@ -156,7 +156,12 @@ body {
 @media (max-width: 960px) {
   .shell {
     grid-template-rows: auto auto 1fr auto;
-    grid-template-columns: 1fr;
+    /* `1fr` is `minmax(auto, 1fr)`, so the single column refuses to be narrower
+     * than its widest min-content — which at 800px is the repo rail, and the
+     * whole shell ends up 1069px wide inside an 800px window. `minmax(0, 1fr)`
+     * lets the column shrink and the children overflow inside their own box,
+     * which is what a media query is for. */
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "sidebar"
       "toolbar"
@@ -169,7 +174,11 @@ body {
     overflow-x: auto;
   }
   .rail-list { display: flex; gap: var(--gap); flex-wrap: wrap; }
-  .rail-list > li { flex: 0 0 auto; }
+  /* A repo path is the one string that cannot be hyphenated by accident, and it
+   * is exactly what makes the strip too wide. Every other row already wraps. */
+  .rail-list > li { flex: 0 0 auto; min-width: 0; max-width: 100%; }
+  .rail-row { overflow-wrap: anywhere; }
+  .rail-section { min-width: 0; }
   .rail-row { border: var(--hairline-w) solid var(--hairline); border-radius: var(--radius-sm); }
   .statusbar { flex-wrap: wrap; }
 }
@@ -353,8 +362,14 @@ body {
   align-items: center;
   gap: var(--gap);
   padding: var(--panel-pad);
+  /* Wrapping is what keeps eleven controls on one row at 1440px and two rows at
+   * 800px, instead of a horizontal scrollbar on the whole page. `min-width: 0`
+   * is the other half: a grid item defaults to min-content, so a long row of
+   * buttons would otherwise widen the track that holds them. */
+  flex-wrap: wrap;
+  min-width: 0;
 }
-.search-field { gap: var(--gap); }
+.search-field { gap: var(--gap); flex: 1 1 12rem; min-width: 0; }
 .input {
   background: var(--raised);
   border: var(--hairline-w) solid var(--hairline);

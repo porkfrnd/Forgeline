@@ -464,3 +464,30 @@ through the door gets, and the first person through the door should get a
 release that released.
 
 suite: 261 unit / 164 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.
+
+## M9c — the final review, and the bug that was only visible by measuring
+
+**Steps and results:**
+
+1. The acceptance criteria were read one at a time against the code. Two gaps:
+   the release did not commit (fixed in M9b), and everything else was done.
+2. Screenshots were captured for every panel at 1440px and 800px, and the app
+   was driven through every panel with a console-error listener — none.
+3. The narrow viewport was then measured rather than eyeballed, and it was
+   **241px wider than its window**. Two separate CSS causes, neither visible at
+   1440px:
+   - `.shell`'s media query set `grid-template-columns: 1fr`, but `1fr` is
+     `minmax(auto, 1fr)` and refuses to be narrower than the content's
+     min-content — so an 800px window got a 1069px shell.
+   - `.toolbar` is a flex row of eleven controls with no `flex-wrap`, and as a
+     grid item it defaults to `min-width: auto`, so it widened its own track.
+4. Two e2e tests now measure `scrollWidth` against `clientWidth` for the
+   dashboard and every panel, so this cannot come back silently.
+
+**The lesson worth keeping is that a narrow viewport is not a small screenshot.**
+Every panel had been reviewed at 1440px and looked fine, because the bug was in
+the page's geometry rather than in any panel's content — which is exactly the
+class of fault that survives every visual review and only shows up when the
+number is measured.
+
+suite: 288 unit / 168 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.

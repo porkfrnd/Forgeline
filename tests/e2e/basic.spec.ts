@@ -2683,3 +2683,78 @@ test.describe("Milestone 9 polish", () => {
     }
   });
 });
+
+/**
+ * The narrow viewport is not a smaller version of the desktop one, so it is
+ * checked for what actually goes wrong at 800px: a page wider than its window.
+ * Two separate CSS causes produced that, and both were invisible at 1440px —
+ * a grid track that refused to shrink below its min-content, and a toolbar row
+ * that could not wrap.
+ */
+test.describe("Milestone 9 the narrow viewport", () => {
+  test("no panel makes the page wider than an 800px window", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root } = await makeAnonymousRepo(baseUrl, cookie, "narrow");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+
+      /** The page's own width against the window's, measured rather than assumed.
+       *  The body is a string because this file is compiled without the DOM
+       *  library, which is the same reason the rest of the suite measures the
+       *  page that way. */
+      const widerThanWindow = async (label: string) => {
+        const measured = (await page.evaluate(
+          "({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth })",
+        )) as { scroll: number; client: number };
+        expect(measured.scroll, `${label} is wider than its window`).toBeLessThanOrEqual(measured.client);
+      };
+
+      await page.waitForSelector(".work", { timeout: 10000 });
+      await widerThanWindow("dashboard");
+
+      for (const [label, selector] of [
+        ["history", ".toolbar-history"],
+        ["stashes", ".toolbar-stash"],
+        ["branches", ".brand-branch"],
+        ["doctor", ".toolbar-doctor"],
+        ["release", ".toolbar-release"],
+        ["notes", ".toolbar-note"],
+        ["ssh keys", ".toolbar-ssh"],
+      ] as const) {
+        await page.locator(selector).click();
+        await page.waitForTimeout(1200);
+        await widerThanWindow(label);
+        await page.locator(selector).click();
+        await page.waitForTimeout(500);
+      }
+
+      // And the repo list is still reachable, which is the reason the narrow
+      // layout turns the rail into a strip instead of hiding it.
+      await expect(page.locator(".rail-row").first()).toBeVisible();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("simple mode fits at 800px too", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root } = await makeAnonymousRepo(baseUrl, cookie, "narrow-simple");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.evaluate(() => localStorage.setItem("forgeline-simple", "on"));
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.waitForSelector(".simple-bar", { timeout: 10000 });
+      const measured = (await page.evaluate(
+        "({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth })",
+      )) as { scroll: number; client: number };
+      expect(measured.scroll).toBeLessThanOrEqual(measured.client);
+      await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
