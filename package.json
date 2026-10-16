@@ -38,6 +38,10 @@
     "open": "^10.1.0"
   },
   "devDependencies": {
+    "@fontsource/barlow-condensed": "5.3.0",
+    "@fontsource/ibm-plex-sans": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@fontsource/source-serif-4": "5.3.1",
     "@playwright/test": "^1.48.2",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",

@@ -321,3 +321,20 @@ Two translator rules were corrected while verifying this slice, both found by
 tests rather than by reading, and both recorded in docs/progress.md: a port
 number containing `403` was being read as an HTTP status, and the wording git
 prints for *any* unreachable remote was being read as a credentials problem.
+
+## Update 4 (2026-10-16) — design repair, in progress
+
+The nine milestones are done, and the design is being repaired to the bar set by
+Update 4. Recorded in `docs/decisions.md` as "Update 4" and described in
+`docs/design.md`. It is not a milestone; nothing here changes what any feature
+does. Three sub-slices, each on `wip/design-<name>`, merged to `main` only when
+`npm run verify` and `npm run verify:design` both pass.
+
+| Slice | Scope | State |
+| --- | --- | --- |
+| A | Foundations and themes (Update 4 sections 3 and 5): the fourth font role, self-hosted fonts, the type floor, the 4px grid, accent tokens, corner marks removed, the seven families repaired | not started |
+| B | Desktop layout and components (section 4): sidebar, toolbar, repo header, file rows, composer, undo drawer, dashboard | not started |
+| C | Real-data charts and hero numbers (rules 4 and 6): hero numbers, activity dots, branch timeline, change-size pills | not started |
+
+`docs/design.md` carries the done-definition; the checklist in Update 4 section 8
+is the gate.

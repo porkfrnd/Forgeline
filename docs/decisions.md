@@ -144,6 +144,37 @@ The three font roles, the motion rules, the Effects setting (Full, Reduced, Off)
 - **Choice:** family, mode, surface, effects, density, layout (sidebar or top tabs), toolbar (icons with labels or icons only), timeline visibility and height, repo list (cards or rows), panel options, text size, reduced motion, simple mode, and accent colour — all through tokens. The accent picker works with every family and adjusts the chosen colour's lightness so text meets 4.5:1 and graphics 3:1, telling the user when it adjusted something.
 - **Reason:** these are the spec's display options mapped onto the new layout, plus the new surface, toolbar, and timeline controls.
 
-## LICENSE (open)
+## Update 4 (2026-10-16)
 
-- **Status:** unresolved. `package.json` currently declares `MIT` as a placeholder. The spec says to ask the user which license to use and not to choose silently. **Action needed from the user** before Milestone 9 / any publish.
+**Source:** a mid-build amendment, delivered out of band, that replaces the earlier version of Update 4. It is a design repair and visual language, not a milestone. Where it disagrees with Update 3 on visuals, Update 4 wins; Updates 1 to 3 still rule on safety, recovery, secrecy of surprises, commit cadence, the slot rule, and real data only.
+
+### What it replaces from Updates 2 and 3
+
+- **The three font roles become four.** A new `--font-display` role carries repo names, card titles, and hero numbers. The three roles from the spec stand: `--font-ui`, `--font-code`, `--font-message`.
+- **Corner registration marks are deleted**, along with whatever draws them. Update 2's "registration ticks" are gone.
+- **The heat ramp is no longer the organising idea.** Colour now means something specific per theme, from a fixed map that is the same in every family: the hero accent is uncommitted work and anything needing attention, green is clean or synced, cool steel is the remote or other people's work, red is deleted lines and destructive actions only, and diffs use their own green and red tints. `--cold`, `--heat-1`…`--heat-5`, `--hot`, and `--white-hot` survive only where the graph needs a ramp; a status never borrows from it.
+- **Two accent tokens become three.** `--accent` for graphics, focus ring, and the selection bar; `--accent-text` for text on the panel; `--accent-strong` for the fill behind button text. This corrects Update 3: white on `#D45A00` and white on `#0B8F83` are both about 4.0:1, which fails button text.
+- **"Cozy" leaves the toolbar** and the density choice moves into the View menu. "History" reads "Undo history".
+- **The undo drawer moves** to a proper overlay — 420px, between toolbar and status bar, 40% scrim, shadow, focus trap, Esc to close — and never covers the status bar. Raw snapshot ids and "no ref change" are behind a collapsed Technical details disclosure.
+
+### What stays
+
+The slot rule, real data only, the wrap-the-git-CLI contract, everything about safety and recovery, the effects levels, the motion rules, the accessibility floor, and the bounded performance budgets.
+
+### Decisions made while applying it
+
+- **Display face: Barlow Condensed**, OFL-1.1, weights 400 and 600 only, Latin subset only. Its Latin 600 woff2 is 22,308 bytes, inside the 40 KB budget. No network font loading; the files are bundled by Vite from `@fontsource/barlow-condensed` into the built package, and the OFL licence text ships with it.
+- **The spec's three fonts are bundled now**, rather than deferred as Update 2 did: IBM Plex Sans (`--font-ui`), JetBrains Mono (`--font-code`), Source Serif 4 (`--font-message`), each weights 400/500/600 as Latin subsets with its licence file. They were rendering through fallbacks until now, which is recorded here as a gap that Update 4 closes rather than leaves open.
+- **Barlow Condensed has no tabular figures.** Hero numbers stay in it, because they are one number at a time; any table of numbers uses `--font-ui` with tabular figures, exactly as the update allows.
+- **`@axe-core/playwright` is added as a dev dependency.** It is not already present, and section 6 asks for it only with a justification: the six design checks include keyboard access and hit targets, and a font-size/contrast script cannot see a control that is only reachable by pointer, or a focus ring that never appears. This is the one-line justification. It is a dev dependency and never ships.
+- **Font packages are dev dependencies, not dependencies.** They are consumed at build time by Vite; the running app imports nothing from `node_modules`. A runtime dependency would mean the package could not start from a plain `npm ci --omit=dev` install.
+- **Branch and gate.** Three sub-slices, `wip/design-foundations`, `wip/design-desktop`, `wip/design-charts`, each merged to `main` only when `npm run verify` and `npm run verify:design` both pass. Sections 6.1 to 6.6 become `npm run verify:design`.
+
+### Anti-slop note
+
+The update names banned copy in the spec; `npm run lint:copy` already enforces the phrase list and already skips `docs/`. The new screenshots are real captures of the real app, not mockups, and no invented data is drawn anywhere — every chart and hero number reads git.
+
+## LICENSE (open) — closed
+
+- **Choice:** MIT, Copyright (c) 2026 porkfrnd. The user picked it from three offered options rather than us choosing silently.
+- **Status:** `LICENSE` written, `package.json` declares `MIT`. Nothing is published, so this is settled for the repository and re-checked at publish time against the current `npm view forgeline`.
