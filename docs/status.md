@@ -347,6 +347,7 @@ before this slice and now has seven checks. The Update 4 section 6 list became
 real checks in `scripts/check-design.mjs`, and `scripts/check-contrast.mjs` became
 a thin wrapper over one shared colour engine, `scripts/check-contrast-engine.mjs`,
 so the browser checks and the token checks cannot disagree about the colours.
+Slice A is merged to `main` as 1f97211; both gates passed before the merge.
 
 Writing the checks first was the point: every item below was a real defect the
 checks found, not something predicted in advance.

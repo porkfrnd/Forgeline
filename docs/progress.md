@@ -549,7 +549,7 @@ with two thousand commits, one with a single commit, and one with fourteen chang
 files covering M, A, D, R and U. Nothing on screen is invented.
 
 suite: 288 unit / 168 e2e, `npm run verify` green and `npm run verify:design` green
-on Node v24.21.0 / git 2.47.3 / Linux.
+on Node v24.21.0 / git 2.47.3 / Linux. Merged to `main` as 1f97211.
 
 ## M9d — the final pass, and the copy that named a button that did not exist
 
