@@ -850,3 +850,75 @@ export async function makeRelease(
     tag: options.tag,
   }) as Promise<{ ok: true; version?: string; wrote?: string[] } | ActionError>;
 }
+
+/** The doctor's report: what this project is, and what it should ignore. */
+export interface DoctorReport {
+  kind: { id: string; name: string; matched: string[] };
+  tracked: Array<{ path: string; reason: string; severity: "warning" | "note"; command: string }>;
+  hasGitignore: boolean;
+  suggested: string;
+  ignoredAtTop: string[];
+  largeFiles: Array<{ path: string; megabytes: number }>;
+}
+
+export async function readDoctor(repoId: string): Promise<{ ok: true; report: DoctorReport } | ActionError> {
+  return readJson(`/api/repos/${encodeURIComponent(repoId)}/doctor`) as Promise<
+    { ok: true; report: DoctorReport } | ActionError
+  >;
+}
+
+export async function writeGitignoreNow(repoId: string): Promise<{ ok: true; added: string } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/doctor/gitignore`, {}) as Promise<
+    { ok: true; added: string } | ActionError
+  >;
+}
+
+/** Stop tracking a file without deleting it from the working tree. */
+export async function untrackFile(repoId: string, path: string): Promise<{ ok: true } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/doctor/untrack`, { path }) as Promise<
+    { ok: true } | ActionError
+  >;
+}
+
+export interface SshKeyInfo {
+  name: string;
+  path: string;
+  publicPath: string | null;
+  publicKey: string | null;
+}
+
+export async function listSshKeys(): Promise<
+  { ok: true; keys: SshKeyInfo[]; dir: string; providers: Array<{ name: string; url: string }> } | ActionError
+> {
+  return readJson("/api/ssh/keys") as Promise<
+    { ok: true; keys: SshKeyInfo[]; dir: string; providers: Array<{ name: string; url: string }> } | ActionError
+  >;
+}
+
+/** A per-repository note, stored in app-data and never inside the repository. */
+export async function readNote(repoId: string): Promise<{ ok: true; text: string } | ActionError> {
+  return readJson(`/api/repos/${encodeURIComponent(repoId)}/note`) as Promise<
+    { ok: true; text: string } | ActionError
+  >;
+}
+
+export async function writeNote(repoId: string, text: string): Promise<{ ok: true } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/note`, { text }) as Promise<{ ok: true } | ActionError>;
+}
+
+/**
+ * Save everything: stage the whole working tree and commit it.
+ *
+ * This is Simple mode's one button. It is deliberately the same action the full
+ * interface's stage-everything-and-commit would be, not a shortcut around it —
+ * a beginner's first commit must land exactly where a daily user's would, or
+ * the app is teaching two different things with one button.
+ */
+export async function commitAll(
+  repoId: string,
+  message: string,
+): Promise<{ ok: true; snapshotRef?: string } | ActionError> {
+  return actionJson(`/api/repos/${encodeURIComponent(repoId)}/commit-all`, { message }) as Promise<
+    { ok: true; snapshotRef?: string } | ActionError
+  >;
+}

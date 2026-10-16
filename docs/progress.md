@@ -418,3 +418,22 @@ suite: 202 unit / 140 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 
 **And one small thing worth the fix.** `toISOString().slice(0, 10)` dates a changelog in UTC, which on a machine east of Greenwich labels this morning's release yesterday — one day off from every commit timestamp the user just looked at. The date is now local, and the test makes the point by checking 00:30 and 23:30 on the same day land on the same date.
 
 suite: 222 unit / 148 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.
+
+## M9 — polish, and the README's stale Status section
+
+**Steps and results:**
+
+1. Simple mode: Save and Send, with plain wording, kept on this computer as a display preference and never a guess about who the user is. Added as a switch in the appearance panel and a toolbar toggle. Nothing becomes unreachable — everything is one button away, and there is a test for both halves of that sentence.
+2. The gitignore doctor, in `src/server/git/doctor.ts`: which project this is from the files that identify it, what a `.gitignore` for it should hold, and what is already tracked that should not be. Untracking is `git rm --cached` and never `git rm` — the difference matters more than it looks, because `git rm` would have deleted the user's `.env`.
+3. SSH key help in `src/server/git/ssh.ts`: lists the keys that exist, reads their public halves, and offers the provider page each one belongs on. The private half is never returned by any code path, and a test asserts it is not in the answer.
+4. Per-repository notes in `src/server/notes.ts`, stored in app-data and never inside the repository — a note written into a working tree shows up in the next `git status` and gets committed by accident.
+5. A CI workflow running `verify` on Linux, macOS, and Windows on Node 22 and 24, and a LICENSE the user chose (MIT).
+6. 37 new unit tests and 14 new e2e tests.
+
+**A design bug, not a missing feature.** The doctor's `.gitignore` button only appeared when no `.gitignore` existed. A repository that already has one is exactly the one where the lines worth adding are missing, so the most common case had no way in. The card is always offered now, in wording that covers both states, and the server already merges rather than overwrites and says so when there is nothing to add.
+
+**The SSH panel could not be tested at all, and the reason is worth recording.** The server resolves `~/.ssh` through `os.homedir()` in the *server* process, and a test cannot set `$HOME` in a process it does not own. So the panel would have been shipped with no honest assertion about it — only "on the developer's machine it happened to work". There is now a test-only endpoint, guarded on `FORGELINE_E2E`, that points the key reader at a temp directory, and the e2e test asserts both that the public key appears and that the private half never does.
+
+**The README audit the brief asked for, and what it found.** The Status section still said "Milestones 1–6 are underway" and "What does not exist yet: branches, stash, history, conflicts, and the release manager" — all of which have existed for several commits. It is now written against what the code does, and the publish status is stated twice, once in Status and once in Install, so a reader who skims cannot conclude it is installable. The operating-system line now says plainly that only Linux has been run, and the layout map names the modules that exist rather than the ones that did when the section was first written.
+
+suite: 259 unit / 162 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.

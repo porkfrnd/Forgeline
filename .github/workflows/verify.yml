@@ -1,0 +1,64 @@
+name: verify
+
+# The build is done when `verify` passes on every operating system the app claims
+# to run on. Node's `engines` is >=22 and the spec names 24 as the recommended
+# version, so the matrix is exactly those two — the floor and the current LTS.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["22", "24"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # git is preinstalled on all three runners, but the app requires 2.31 or
+      # newer and its own startup check depends on the version being readable.
+      - name: print the git version
+        run: git --version
+
+      - name: install from the lockfile
+        run: npm ci
+
+      # The end-to-end tests write git identity into temp repositories, so an
+      # identity is configured globally rather than left to the runner's own.
+      # The app refuses to run git without one, which is the correct behaviour
+      # and the reason this step exists.
+      - name: set a git identity for the runner
+        run: |
+          git config --global user.name "Forgeline CI"
+          git config --global user.email "ci@forgeline.invalid"
+          git config --global init.defaultBranch main
+
+      # The suite must never touch a real home directory: notes, the journal,
+      # and the SSH key reader all read it, and a test that writes into the
+      # runner's home is a test that cannot run twice.
+      - name: point the app's data at a temp folder
+        run: |
+          echo "FORGELINE_DATA_DIR=${{ runner.temp }}/forgeline-data" >> "$GITHUB_ENV"
+
+      - name: verify
+        run: npm run verify
+        env:
+          CI: true
+
+      # The built server is what users install, so a typecheck of the source is
+      # not enough: `npm pack` runs the `prepack` build and proves the tarball
+      # can be produced with no step the user would have to take.
+      - name: pack
+        run: npm pack --dry-run

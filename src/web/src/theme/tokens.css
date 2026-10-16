@@ -1319,3 +1319,219 @@ body {
 .toolbar-release {
   gap: var(--space-1);
 }
+
+/* ---------- doctor, notes, ssh (Milestone 9) ---------- */
+.doctor-panel,
+.ssh-panel,
+.note-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: stretch;
+  width: min(52rem, 100%);
+}
+
+.doctor-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-2);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  max-width: 60ch;
+}
+
+.doctor-card-note {
+  border-left: 3px solid var(--status-conflict);
+}
+
+.doctor-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.doctor-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--surface-border);
+  border-left: 3px solid var(--surface-border);
+  border-radius: var(--radius-md);
+}
+
+.doctor-row[data-severity="warning"] {
+  border-left-color: var(--status-deleted);
+}
+
+.doctor-row[data-severity="note"] {
+  border-left-color: var(--status-modified);
+}
+
+.doctor-head {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.doctor-severity {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.doctor-reason {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  max-width: 60ch;
+}
+
+.doctor-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.doctor-command {
+  font-size: var(--font-size-xs);
+}
+
+.doctor-large {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+}
+
+/* ---------- ssh ---------- */
+.ssh-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ssh-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: flex-start;
+}
+
+.ssh-path {
+  font-size: var(--font-size-xs);
+}
+
+.ssh-key {
+  margin: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.ssh-flag {
+  font-size: var(--font-size-sm);
+  color: var(--status-deleted);
+  max-width: 60ch;
+}
+
+.ssh-providers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ssh-provider-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* ---------- note ---------- */
+.note-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.note-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.note-text {
+  width: 100%;
+  min-height: 10rem;
+  resize: vertical;
+}
+
+.note-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.toolbar-doctor,
+.toolbar-ssh,
+.toolbar-note {
+  gap: var(--space-1);
+}
+
+/* ---------- simple mode (Milestone 9) ---------- */
+.simple-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: stretch;
+  width: min(44rem, 100%);
+}
+
+.simple-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.simple-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.simple-input {
+  width: 100%;
+}
+
+.simple-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.simple-send {
+  max-width: 60ch;
+}
+
+.toolbar-simple {
+  gap: var(--space-1);
+}

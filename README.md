@@ -76,33 +76,41 @@ flat). Effects Off forces Solid and removes all motion.
 
 ## Status
 
-**Early. Milestones 1–6 are underway.** What works today: the dashboard
-discovers repositories in folders you pick and shows live branch,
-changed-file, and ahead/behind counts, pushed over a local stream as files
-change. The commit flow works end to end — you can see what changed, stage
-and unstage whole files or individual hunks, read both staged and unstaged
-diffs, and commit with a sanity-check card that names every staged file before
-anything is written. Discarding local changes takes a snapshot first.
+**Working end to end, not yet published.** Every milestone in the build prompt
+is built and tested:
 
-Safety is built: every action that changes a repo is written to an action
-journal in your OS app-data folder and never inside a repository, an Undo
-timeline lists those actions newest first with the exact git command behind a
-toggle, and an Undo button appears only where recovery has been proven by
-tests. Rescue mode snapshots, parks HEAD under a private backup ref so no
-local commit is lost, then resets the repo to a clean tree.
+- **Dashboard.** Discovers repositories in folders you pick, with live branch,
+  changed-file, and ahead/behind counts pushed over a local stream as files
+  change.
+- **Commit flow.** See what changed, stage and unstage whole files or
+  individual hunks, read both staged and unstaged diffs, and commit behind a
+  sanity-check card that names every staged file before anything is written.
+- **Safety.** Every action that changes a repo is written to an action journal
+  in your OS app-data folder and never inside a repository; an Undo timeline
+  lists them newest first with the exact git command behind a toggle, and an
+  Undo button appears only where recovery is proven by tests. Rescue mode
+  snapshots, parks HEAD under a private backup ref so no local commit is lost,
+  then resets the repo to a clean tree.
+- **Errors.** A failing git command comes back as a plain-English card with
+  buttons that repair it, and the raw output one click away. Forgeline also
+  keeps a local record of which fixes actually worked.
+- **Remotes.** Fetch, pull, push, and an ahead/behind indicator, with GitHub
+  sign-in through the OAuth device flow and a token your OS keychain owns.
+- **Branches, stash, history, blame.** A lane-coloured log every branch draws
+  at once, blame per file, the full stash stack, and branch create, switch,
+  track, rename and delete.
+- **Conflicts.** When a merge stops, the resolver appears on its own — it is
+  the one state in git that does not go away by itself. Each file is shown with
+  all three versions beside it, and three answers in the same words.
+- **Releases.** Version bump, changelog, and tag, with the plan stated before
+  anything is done. Nothing commits.
+- **Simple mode.** Save and Send, with plain wording, for people who want to
+  save files and not learn git.
+- **Extras.** A command palette on Ctrl/Cmd-K, the gitignore doctor, SSH key
+  help, and per-repository notes stored on this computer only.
 
-When git fails, the error comes back as a plain-English card with buttons
-that fix it, and the exact git output one click away behind **Show details**
-and **Copy details**. What Forgeline can repair in one click — a missing
-identity, a folder that isn't a repository yet, a merge to abandon, a stuck
-git lock — it repairs in one click. Anything it cannot repair yet says so
-rather than showing a button that would do nothing. Forgeline also keeps a
-local record of which fixes actually worked, so a remedy that has never helped
-stops being offered first.
-
-What does not exist yet: branches, stash, history, conflicts, and the release
-manager. No control is drawn for a feature that is not built, so nothing is a
-dead button.
+No control is drawn for a feature that is not built, so nothing is a dead
+button.
 
 **The Undo timeline**, with the saved snapshot and the command behind it:
 
@@ -148,9 +156,28 @@ wrong, `docs/progress.md` is the honest record: it keeps the mistakes.
 - **Node.js** 22 or newer (24 recommended). Check: `node --version`.
 - **git** 2.31 or newer. Forgeline checks on startup and refuses to start on
   older git. Check: `git --version`.
-- Linux, macOS, or Windows. Only Linux has been exercised so far.
+- Linux, macOS, or Windows. The code makes no assumptions about one operating
+  system — paths, line endings, shells, and keychain access are all
+  platform-aware — but **only Linux has actually been run**. macOS and Windows
+  are untested, and
+  [docs/status.md](docs/status.md) says so. There is a CI workflow that runs
+  `npm run verify` on all three; until it has passed, treat the other two as
+  claims rather than facts.
 
-## Run it
+## Install and run
+
+Once it is published:
+
+```
+npm install -g forgeline
+forgeline            # start on an OS-assigned port and open the browser
+forgeline 4700       # start on a specific port
+forgeline --no-open  # start without opening a browser
+```
+
+**It has not been published yet**, and the name `forgeline` has not been
+checked for availability — so the commands above are what it *will* be, not
+what it is. Do not treat it as installable yet.
 
 From a checkout, after `npm ci`:
 
@@ -253,6 +280,14 @@ src/server/git/diff.ts        changed-file records and unified-diff parsing
 src/server/journal.ts         the action journal, written to app-data
 src/server/errorHistory.ts    which errors happened and which fix worked
 src/server/git/errors.ts      the error translator and its rule catalogue
+src/server/git/branches.ts    list, create, switch, track, rename, delete
+src/server/git/stash.ts       save, apply, pop, drop, and the stack as one view
+src/server/git/history.ts     the log, per-file history, and blame
+src/server/git/conflicts.ts   read, resolve, finish, or abandon a stopped merge
+src/server/git/release.ts     version bump, changelog, tag
+src/server/git/doctor.ts      project type, .gitignore suggestions, untracked findings
+src/server/git/ssh.ts         list SSH keys and their public halves
+src/server/notes.ts           per-repository notes, stored in app-data only
 src/server/snapshots.ts       private refs for pre-action recovery points
 src/server/appdata.ts         resolves the OS app-data folder, never inside a repo
 src/server/scan/              bounded repository discovery
@@ -261,7 +296,9 @@ src/server/queue.ts           per-repository single-writer queue
 src/shared/types.ts           types shared by server and browser
 src/web/src/theme/families.ts every colour, verified by scripts/check-contrast.mjs
 src/web/src/theme/            ThemeProvider, tokens.css (structure only)
-src/web/src/components/       RepoRail, StatusBar, CommandPalette, AppearancePanel
+src/web/src/components/       RepoRail, StatusBar, CommandPalette, AppearancePanel,
+                              BranchPanel, StashPanel, HistoryPanel, ConflictResolver,
+                              ReleasePanel, DoctorPanel, SshPanel, NotePanel, SimpleBar
 src/web/src/app/             App shell, API client, SSE-driven repo list
 docs/                         spec, decisions, design, architecture, status, progress
 ```
@@ -280,5 +317,6 @@ Two more, if you want them:
 
 ## Licence
 
-Undecided. `package.json` currently declares `MIT` as a placeholder; no
-`LICENSE` file has been chosen. This needs a decision before any publish.
+MIT. See [LICENSE](LICENSE).
+
+Copyright (c) 2026 porkfrnd.

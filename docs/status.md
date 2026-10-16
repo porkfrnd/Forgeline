@@ -286,6 +286,24 @@ makes git consider the conflict resolved, so a button with that label that hid
 the conflict would be the worst thing this feature could do. 11 unit and 6 e2e
 tests, all driving a real merge into a real conflict.
 
+**Simple mode.** Save and Send, and plain wording. It is a display preference kept
+on this computer and never a guess about who the user is: everything the full
+interface can do stays one button away, and there is a test for both halves of
+that sentence — the quiet screen is quiet, and the full one comes back.
+
+**Extras.** The gitignore doctor reads the project type off the real files,
+suggests a `.gitignore`, and flags tracked files that look like secrets. The
+one action it offers that touches the index is `git rm --cached`, which untracks
+without deleting, and the comment says why. SSH key help lists the keys that
+exist and their public halves; the private half is never returned by any code
+path.
+
+**Cross-platform.** The code is platform-aware throughout — paths, line
+endings, shells, keychain — and there is now a CI workflow running `verify` on
+Linux, macOS and Windows. **Only Linux has actually been run.** The other two
+are claims until that workflow is green, and `docs/status.md` and the README
+both say so rather than letting a matrix in a YAML file stand in for evidence.
+
 **Releases.** The plan is stated before anything is done, because a release is
 the one action easiest to describe in advance: this is the version now, this is
 what it becomes, these are the commits it contains. The version is read from

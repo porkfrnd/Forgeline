@@ -2419,3 +2419,226 @@ test.describe("Milestone 8 releases", () => {
     }
   });
 });
+
+/**
+ * Milestone 9: Simple mode, the doctor, notes, and SSH keys.
+ *
+ * Simple mode is a preference kept on this computer and never a guess about who
+ * the user is. Everything the full interface can do stays one button away, so
+ * these tests assert both that the quiet screen is quiet and that the full one
+ * is still reachable.
+ */
+test.describe("Milestone 9 polish", () => {
+  async function makeSimpleRepo(baseUrl: string, cookie: string, name: string) {
+    const root = mkdtempSync(join(tmpdir(), `fl-e2e-simple-${name}-`));
+    const dir = join(root, "demo");
+    mkdirSync(dir, { recursive: true });
+    spawnSync("git", ["init", "-q", "-b", "main", "."], { cwd: dir });
+    spawnSync("git", ["config", "user.email", "ada@fixture.invalid"], { cwd: dir });
+    spawnSync("git", ["config", "user.name", "Ada Fixture"], { cwd: dir });
+    writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name: "demo", version: "0.1.0" }, null, 2)}\n`);
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["commit", "-q", "-m", "chore: initial"], { cwd: dir });
+    await setRootsForTest(baseUrl, [root]);
+    const id = await registerRepoForTest(baseUrl, cookie, dir);
+    return { root, dir, id };
+  }
+
+  test("simple mode leaves Save and Send and nothing else in the way", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeSimpleRepo(baseUrl, cookie, "on");
+    writeFileSync(join(dir, "file.txt"), "a change\n");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await expect(page.locator(".simple-bar")).toHaveCount(0);
+      await page.evaluate(() => localStorage.setItem("forgeline-simple", "on"));
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.waitForSelector(".simple-bar", { timeout: 10000 });
+
+      // What is on screen: one button and a box.
+      await expect(page.locator(".simple-bar")).toContainText("1 file has changed");
+      await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+      // And what is not: staging, the graph, the diff viewer.
+      await expect(page.locator(".worktable")).toHaveCount(0);
+      await expect(page.locator(".history-panel")).toHaveCount(0);
+
+      // The wording a person who has never used git would use.
+      await expect(page.locator(".simple-bar")).toContainText("a copy of all your changes on this computer");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("Save in simple mode commits everything, and git agrees", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeSimpleRepo(baseUrl, cookie, "save");
+    const headBefore = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+    // An untracked file as well as a modification, because "save everything"
+    // must not be the `git commit -a` behaviour that leaves new files behind.
+    writeFileSync(join(dir, "new-file.txt"), "brand new\n");
+    writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name: "demo", version: "0.2.0" }, null, 2)}\n`);
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.evaluate(() => localStorage.setItem("forgeline-simple", "on"));
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.waitForSelector(".simple-bar", { timeout: 10000 });
+
+      await page.locator("#simple-message").fill("saved everything at once");
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await page.waitForTimeout(2000);
+
+      const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(head).not.toBe(headBefore);
+
+      const message = spawnSync("git", ["log", "-1", "--format=%s"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(message).toBe("saved everything at once");
+      // The untracked file went in too, which `git commit -a` would have missed.
+      const files = spawnSync("git", ["show", "--name-only", "--format=", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout
+        .split("\n")
+        .filter((line) => line.length > 0);
+      expect(files).toContain("new-file.txt");
+
+      // And the working tree is clean, because everything really was saved.
+      const status = spawnSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(status).toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("turning simple mode off brings every panel back", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root } = await makeSimpleRepo(baseUrl, cookie, "off");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.evaluate(() => localStorage.setItem("forgeline-simple", "on"));
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.waitForSelector(".simple-bar", { timeout: 10000 });
+
+      await page.getByRole("button", { name: /Simple: on/ }).click();
+      await page.waitForSelector(".worktable", { timeout: 10000 });
+      await expect(page.locator(".simple-bar")).toHaveCount(0);
+      // Nothing became unreachable — it was all one button away the whole time.
+      // Every one of them is still on screen, and the branch control remembers
+      // it is also the brand, so it is found by the class it really has.
+      await expect(page.locator(".toolbar-history")).toBeVisible();
+      await expect(page.locator(".toolbar-stash")).toBeVisible();
+      await expect(page.locator(".brand-branch")).toBeVisible();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the doctor reads the project type off the real files", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeSimpleRepo(baseUrl, cookie, "doctor");
+    writeFileSync(join(dir, "package-lock.json"), "{}");
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["commit", "-q", "-m", "chore: lockfile"], { cwd: dir });
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-doctor").click();
+      const panel = page.locator(".doctor-panel");
+      await expect(panel).toBeVisible();
+      // It says what it is and shows its work.
+      await expect(panel).toContainText("a Node.js project");
+      await expect(panel).toContainText("package-lock.json");
+      await page.screenshot({ path: "screenshots/m9-doctor.png" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the doctor's .gitignore only adds the missing lines", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeSimpleRepo(baseUrl, cookie, "gi");
+    writeFileSync(join(dir, ".gitignore"), "my-own-thing/\n");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-doctor").click();
+      await page.locator(".doctor-panel").getByRole("button", { name: "Add the lines that are missing" }).click();
+      await page.waitForTimeout(2000);
+
+      const text = readFileSync(join(dir, ".gitignore"), "utf8");
+      expect(text).toContain("my-own-thing/");
+      expect(text.split("\n").filter((l) => l.trim() === "my-own-thing/").length).toBe(1);
+      // And what a Node project needs, which was not there before.
+      expect(text).toContain("node_modules/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a note is stored on this computer and never inside the repository", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeSimpleRepo(baseUrl, cookie, "note");
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-note").click();
+      await page.locator("#note-text").fill("remember where the deploy key lives");
+      await page.getByRole("button", { name: "Save the note" }).click();
+      await page.waitForTimeout(1500);
+
+      // Nothing appeared in the repository, and its working tree is still clean.
+      const entries = spawnSync("ls", ["-A", dir], { encoding: "utf8" }).stdout.split("\n").filter((l) => l.length > 0).sort();
+      expect(entries).not.toContain(".forgeline-note");
+      const status = spawnSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(status).toBe("");
+
+      // And it is there when the page is reopened, so it was really stored.
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-note").click();
+      await expect(page.locator("#note-text")).toHaveValue("remember where the deploy key lives");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the SSH panel shows a public key and never the private half", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const fakeHome = mkdtempSync(join(tmpdir(), "fl-e2e-ssh-"));
+    // A fake ~/.ssh with a real public key and a private half that must not be
+    // shown, copied, or sent anywhere.
+    const sshPath = join(fakeHome, ".ssh");
+    mkdirSync(sshPath, { recursive: true });
+    writeFileSync(join(sshPath, "id_ed25519"), "-----BEGIN OPENSSH PRIVATE KEY-----\nSECRET\n-----END OPENSSH PRIVATE KEY-----\n");
+    writeFileSync(join(sshPath, "id_ed25519.pub"), "ssh-ed25519 AAAAoperator@host\n");
+
+    try {
+      // The server resolves ~/.ssh from the home directory of the *server*
+      // process, and a test cannot change another process's environment — so the
+      // server is asked, through the endpoint that exists only in e2e, to read
+      // the fake home instead. The seam is closed again in the finally.
+      await call(baseUrl, cookie, "/api/__test__/ssh-home", "POST", { path: fakeHome });
+
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-ssh").click();
+      const panel = page.locator(".ssh-panel");
+      await expect(panel).toBeVisible();
+      await expect(panel).toContainText("ssh-ed25519");
+      await expect(panel.getByRole("button", { name: /Copy the public key/ })).toBeVisible();
+
+      const text = await panel.innerText();
+      expect(text).not.toContain("PRIVATE KEY");
+      expect(text).not.toContain("SECRET");
+
+      // And the seam is closed, so the next test reads the real home again.
+      await call(baseUrl, cookie, "/api/__test__/ssh-home", "POST", { path: null });
+    } finally {
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+});

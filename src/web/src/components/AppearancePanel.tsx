@@ -1,4 +1,5 @@
 import { useEffect, useRef, type RefObject } from "react";
+import { loadSimpleMode, saveSimpleMode } from "../app/simpleMode";
 import { FAMILIES, visibleFamilies, type Mode } from "../theme/families";
 import { useTheme, type Density, type Effects, type Surface } from "../theme/ThemeProvider";
 
@@ -7,6 +8,12 @@ interface AppearancePanelProps {
   closeRef?: RefObject<HTMLElement | null>;
   onClose: () => void;
 }
+
+/**
+ * Simple mode is a display preference, so it lives with the other ones rather
+ * than in a separate place a person has to know to look. It is kept on this
+ * computer and is never a guess about who the user is.
+ */
 
 /**
  * Appearance: family, mode, surface, effects, density.
@@ -40,6 +47,7 @@ export function AppearancePanel({ closeRef, onClose }: AppearancePanelProps) {
   const family = FAMILIES.find((f) => f.id === appearance.family) ?? FAMILIES[0];
   const modeChoice = appearance.mode;
   const modes: (Mode | "auto")[] = ["auto", "dark", "light"];
+  const simple = loadSimpleMode();
 
   return (
     <div
@@ -141,6 +149,27 @@ export function AppearancePanel({ closeRef, onClose }: AppearancePanelProps) {
           </button>
         ))}
       </div>
+      <p className="label">Interface</p>
+      <div className="control-grid">
+        <button
+          type="button"
+          className="button"
+          aria-pressed={simple}
+          title={
+            simple
+              ? "Turn off to see branches, staging, and the graph again."
+              : "Two buttons — Save and Send — and plain wording. Nothing becomes unreachable."
+          }
+          onClick={() => saveSimpleMode(!simple)}
+        >
+          {simple ? "Simple mode: on" : "Simple mode: off"}
+        </button>
+      </div>
+      <p className="live-note">
+        {simple
+          ? "Simple mode is on. Branches, staging, and the graph stay out of the way; every one of them is still a button away."
+          : "Simple mode is off. Turning it on leaves Save and Send on screen, and everything else one click away."}
+      </p>
     </div>
   );
 }

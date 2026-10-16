@@ -26,6 +26,9 @@ import {
   pullRepo,
   pushRepo,
 } from "./git/remote.js";
+import { scanWorkingTree, untrackFile, writeGitignore } from "./git/doctor.js";
+import { listSshKeys, PROVIDER_KEY_PAGES, setSshHomeForTest } from "./git/ssh.js";
+import { readNote, writeNote } from "./notes.js";
 import {
   bumpVersion,
   listTags,
@@ -416,6 +419,18 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
   // five real minutes. Same FORGELINE_E2E=1 guard as the mint endpoint.
   // POST-only because the global middleware rejects non-GET/HEAD/OPTIONS
   // requests without a JSON content-type, and no real route may share it.
+  /**
+   * Point the SSH key reader at a different home directory. Enabled only when
+   * `FORGELINE_E2E` is set, because the only thing that needs it is the test
+   * suite: a test cannot change `$HOME` in a process it does not own.
+   */
+  app.post("/api/__test__/ssh-home", async (c) => {
+    if (process.env.FORGELINE_E2E !== "1") return c.notFound();
+    const body = await c.req.json<{ path?: unknown }>();
+    setSshHomeForTest(typeof body.path === "string" && body.path.length > 0 ? body.path : null);
+    return c.json({ ok: true });
+  });
+
   app.post("/api/__test__/expire-bootstrap", async (c) => {
     if (process.env.FORGELINE_E2E !== "1") {
       return c.text("Not found", 404);
@@ -700,6 +715,54 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       return gitFailure(c, res);
     }
     return c.json({ ok: true });
+  });
+
+  /**
+   * Save everything: stage the whole working tree and commit it.
+   *
+   * This is Simple mode's one button, and it is the whole reason it exists —
+   * "commit everything with a message" is what a person who has never used
+   * git means by save. It is deliberately NOT `git commit -a`: `-a` stages
+   * tracked modifications and leaves untracked files behind, which for a
+   * newcomer is a repository that saves sometimes. `add -A` says what the
+   * button says.
+   *
+   * The one thing it does not skip is the snapshot, because this is the widest
+   * reach any action in the app has.
+   */
+  app.post("/api/repos/:id/commit-all", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ message?: unknown }>();
+    const message = body.message;
+    if (typeof message !== "string" || message.trim().length === 0) {
+      return c.json({ code: "bad-request", title: "Type a few words about what changed." }, 400);
+    }
+    const snapshot = await takeSnapshot(repo.path);
+    const beforeRefs = await readRefs(repo.path);
+
+    const added = await queue.run(repo.path, () =>
+      journaled(repo.path, `Saved everything`, () =>
+        runGit(["-C", repo.path, "add", "-A"], { cwd: repo.path }),
+        { undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref } },
+      ),
+    );
+    if (added.exitCode !== 0) return gitFailure(c, added);
+
+    const res = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        `Saved everything: ${message.trim()}`,
+        () => runGit(["-C", repo.path, "commit", "-m", message.trim()], { cwd: repo.path }),
+        beforeRefs.head !== null
+          ? { undo: { kind: "reset-soft", head: beforeRefs.head } }
+          : { undoable: false, notUndoableReason: "This was the first commit in an empty repository, so there is no earlier commit to return to." },
+      ),
+    );
+    if (res.exitCode !== 0) return gitFailure(c, res);
+    return c.json({ ok: true, snapshot: snapshot.ref });
   });
 
   // Discarding local changes: the first of the spec's "risky" actions, and
@@ -1076,6 +1139,96 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
         ? null
         : "You are signed out of Forgeline. GitHub still lists this app under your authorised OAuth apps, where you can revoke it if you want to.",
     });
+  });
+
+  /* --------------------------------------------------------------- *
+   * Notes, the doctor, and SSH keys (Milestone 9).
+   *
+   * Notes live in app-data and never in a repository, because a file written
+   * into the user's working tree shows up in their next `git status` and gets
+   * committed by accident. The doctor reads the tree and suggests; the one
+   * thing it does write is stated first.
+   * --------------------------------------------------------------- */
+
+  /** The note for one repository, or an empty string when there is none. */
+  app.get("/api/repos/:id/note", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const text = await readNote(repo.path);
+    return c.json({ ok: true, text });
+  });
+
+  /** Write the note. It is stored in app-data, and nothing is written into the
+   *  repository — the test for that writes a note and asserts `git status` is
+   *  still clean. */
+  app.post("/api/repos/:id/note", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ text?: unknown }>();
+    const text = typeof body.text === "string" ? body.text : "";
+    await writeNote(repo.path, text);
+    return c.json({ ok: true });
+  });
+
+  /** The gitignore doctor: what this project is, and what it should ignore. */
+  app.get("/api/repos/:id/doctor", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const report = await scanWorkingTree(repo.path);
+    return c.json({ ok: true, report });
+  });
+
+  /** Add the missing lines to `.gitignore`. Never rewrites what is there, and
+   *  never touches the working tree itself. */
+  app.post("/api/repos/:id/doctor/gitignore", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const report = await scanWorkingTree(repo.path);
+    const result = await queue.run(repo.path, () =>
+      journaled(
+        repo.path,
+        `Wrote a .gitignore for this ${report.kind.name}`,
+        () => writeGitignore(repo.path, report.suggested),
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, added: result.stdout.trim() });
+  });
+
+  /** Stop tracking a file without deleting it from the working tree. This is
+   *  the one doctor action that touches the index, so it says both halves. */
+  app.post("/api/repos/:id/doctor/untrack", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.notFound();
+    const repo = registry.get(id);
+    if (!repo) return c.notFound();
+    const body = await c.req.json<{ path?: unknown }>();
+    if (typeof body.path !== "string" || body.path.length === 0) {
+      return c.json({ code: "bad-request", title: "Which file?" }, 400);
+    }
+    const snapshot = await takeSnapshot(repo.path);
+    const result = await queue.run(repo.path, () =>
+      journaled(repo.path, `Stopped tracking ${body.path}`, () =>
+        untrackFile(repo.path, body.path as string),
+        { undo: { kind: "restore-snapshot", snapshotRef: snapshot.ref } },
+      ),
+    );
+    if (!result.ok) return gitFailure(c, result);
+    return c.json({ ok: true, snapshot: snapshot.ref });
+  });
+
+  /** The SSH keys that exist, and where each provider wants them pasted. */
+  app.get("/api/ssh/keys", async (c) => {
+    const list = await listSshKeys();
+    return c.json({ ok: true, keys: list.keys, dir: list.dir, providers: PROVIDER_KEY_PAGES });
   });
 
   /* --------------------------------------------------------------- *

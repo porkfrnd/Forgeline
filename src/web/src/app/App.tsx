@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { GitBranch, Inbox, Tag } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { GitBranch, Inbox, KeyRound, Stethoscope, StickyNote, Tag, ToggleLeft } from "lucide-react";
 import { useTheme } from "../theme/ThemeProvider";
 import { useRepos } from "./useRepos";
 import { fetchChanges, listStashes, readConflicts, type ChangeFile } from "./git.js";
@@ -19,6 +19,11 @@ import { StashPanel } from "../components/StashPanel";
 import { HistoryPanel } from "../components/HistoryPanel";
 import { ConflictResolver } from "../components/ConflictResolver";
 import { ReleasePanel } from "../components/ReleasePanel";
+import { DoctorPanel } from "../components/DoctorPanel";
+import { SshPanel } from "../components/SshPanel";
+import { NotePanel } from "../components/NotePanel";
+import { loadSimpleMode, saveSimpleMode } from "../app/simpleMode";
+import { SimpleBar } from "../components/SimpleBar";
 import { History } from "lucide-react";
 import {
   abortMerge,
@@ -72,6 +77,31 @@ export function App() {
    */
   const [conflictOpen, setConflictOpen] = useState(false);
   const [releaseOpen, setReleaseOpen] = useState(false);
+  /**
+   * Panels that are opened deliberately, rather than appearing on their own.
+   * The conflict resolver is not in this group: it appears because git stopped,
+   * which is the one state that does not go away by itself.
+   */
+  const [doctorOpen, setDoctorOpen] = useState(false);
+  /**
+   * Simple mode: Save and Send, and nothing else in the way.
+   *
+   * It is a preference, kept on this computer like every other display choice,
+   * rather than a guess about who the user is. Nothing the full interface can
+   * do becomes unreachable — it is all still one button away, so "simple" here
+   * means quieter rather than smaller.
+   */
+  const [simpleMode, setSimpleMode] = useState(loadSimpleMode);
+
+  /** Turn Simple mode on or off. A reload is the honest way to switch a mode
+   *  that changes which screens are on screen, rather than a re-render that
+   *  briefly puts two different interfaces on the page at once. */
+  const toggleSimple = useCallback(() => {
+    saveSimpleMode(!loadSimpleMode());
+    setSimpleMode(!loadSimpleMode());
+  }, []);
+  const [sshOpen, setSshOpen] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
   /** A one-line note shown by a panel that wants to confirm what it just did. */
   const [note, setNote] = useState<string | null>(null);
   /** How many stashes there are, for a number on the toolbar. Zero draws no
@@ -382,6 +412,52 @@ export function App() {
         </button>
         <button
           type="button"
+          className="button toolbar-simple"
+          aria-pressed={simpleMode}
+          onClick={toggleSimple}
+          title={
+            simpleMode
+              ? "Turn Simple mode off to see branches, staging, and the graph again."
+              : "Two buttons — Save and Send — and plain wording. Nothing becomes unreachable."
+          }
+        >
+          <ToggleLeft size={15} strokeWidth={1.5} aria-hidden="true" />
+          {simpleMode ? "Simple: on" : "Simple: off"}
+        </button>
+        <button
+          type="button"
+          className="button toolbar-doctor"
+          aria-expanded={doctorOpen}
+          onClick={() => setDoctorOpen((v) => !v)}
+          disabled={selectedId === null}
+          title={selectedId === null ? "Open a repository to check it" : "Gitignore doctor"}
+        >
+          <Stethoscope size={15} strokeWidth={1.5} aria-hidden="true" />
+          Check
+        </button>
+        <button
+          type="button"
+          className="button toolbar-ssh"
+          aria-expanded={sshOpen}
+          onClick={() => setSshOpen((v) => !v)}
+          title="SSH keys"
+        >
+          <KeyRound size={15} strokeWidth={1.5} aria-hidden="true" />
+          Keys
+        </button>
+        <button
+          type="button"
+          className="button toolbar-note"
+          aria-expanded={noteOpen}
+          onClick={() => setNoteOpen((v) => !v)}
+          disabled={selectedId === null}
+          title={selectedId === null ? "Open a repository to note it" : "A note about this repository"}
+        >
+          <StickyNote size={15} strokeWidth={1.5} aria-hidden="true" />
+          Note
+        </button>
+        <button
+          type="button"
           className="button toolbar-release"
           aria-expanded={releaseOpen}
           onClick={() => setReleaseOpen((v) => !v)}
@@ -586,6 +662,24 @@ export function App() {
           />
         ) : null}
 
+        {doctorOpen && selectedId !== null ? (
+          <DoctorPanel
+            repoId={selectedId}
+            onChanged={() => void refreshChanges()}
+            onError={reportError}
+            onNote={setNote}
+            onClose={() => setDoctorOpen(false)}
+          />
+        ) : null}
+
+        {sshOpen ? (
+          <SshPanel onError={reportError} onNote={setNote} onClose={() => setSshOpen(false)} />
+        ) : null}
+
+        {noteOpen && selectedId !== null ? (
+          <NotePanel repoId={selectedId} onError={reportError} onClose={() => setNoteOpen(false)} />
+        ) : null}
+
         {branchPanelOpen && selectedId !== null ? (
           <BranchPanel
             repoId={selectedId}
@@ -598,6 +692,17 @@ export function App() {
 
         {note !== null ? <p className="message muted work-note">{note}</p> : null}
 
+        {simpleMode && selectedId !== null ? (
+          <SimpleBar
+            repoId={selectedId}
+            changeCount={files.length}
+            onSaved={() => void refreshChanges()}
+            onError={reportError}
+            onNote={setNote}
+          />
+        ) : null}
+
+        {!simpleMode ? (
         <section className="panel worktable" data-ticks>
           {selectedId === null ? (
             <>
@@ -630,6 +735,7 @@ export function App() {
             />
           )}
         </section>
+        ) : null}
       </main>
 
       <StatusBar repo={selected} liveMode={liveMode} effects={appearance.effects} />
