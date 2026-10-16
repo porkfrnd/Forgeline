@@ -4,8 +4,8 @@ import { commitAll, isActionError, type ActionError } from "../app/git";
 /**
  * Simple mode.
  *
- * Two buttons and a box to type in: **Save** and **Send**. Everything else the
- * interface can do is still available, it is just not in the way. The wording
+ * One button and a box to type in: **Save**. Everything else the interface can
+ * do is still available, it is just not in the way. The wording
  * is the wording a person who has never used git would use — "your changes are
  * saved on this computer" is true and specific, and "staged and committed" is
  * neither.
@@ -94,9 +94,9 @@ export function SimpleBar({ repoId, changeCount, onSaved, onError, onNote }: Sim
       </form>
 
       <p className="message muted simple-send">
-        When you are ready to put a copy on GitHub, GitLab, or Bitbucket, switch the view back with the
-        <strong> Advanced</strong> button and use <strong>Send</strong>. It is the same action either way —
-        it just asks first whether that is where the changes should go.
+        When you are ready to put a copy somewhere else — GitHub, GitLab, or Bitbucket — press the{" "}
+        <strong>Simple: on</strong> button to bring the full view back, and <strong>Send</strong> is there.
+        It is the same push either way; it just asks first whether that is where the changes should go.
       </p>
     </section>
   );

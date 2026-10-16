@@ -1,7 +1,11 @@
 # Status
 
-> Last updated: 2026-10-15
-> Describes commit: 06ad8a3 (Milestone 3 complete, tag `milestone-3`)
+> Last updated: 2026-10-16
+> Describes commit: the final polish of Milestone 9 (tag `milestone-9` pushed)
+
+**Everything in the build prompt is built and tested.** All nine milestones
+are done. What remains outstanding is not code: the package is unpublished, the
+name is unchecked, and macOS and Windows have never been run.
 
 ## Run plan (Update 2, section 1)
 

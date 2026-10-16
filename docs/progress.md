@@ -491,3 +491,28 @@ class of fault that survives every visual review and only shows up when the
 number is measured.
 
 suite: 288 unit / 168 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.
+
+## M9d — the final pass, and the copy that named a button that did not exist
+
+**Steps and results:**
+
+1. The acceptance criteria were read one at a time against the code again. Two
+   were already done and one was the release commit, fixed in M9b.
+2. Every screenshot referenced in the README was checked against the disk; all
+   six exist. Four new ones were captured and four added: the history graph, the
+   release manager, the gitignore doctor, and the narrow viewport's doctor.
+3. Every panel was driven in the browser with a console-error listener. None.
+4. The narrow viewport was measured and is no longer wider than its window.
+
+**And one bug that was only findable by reading the copy as a user would.**
+Simple mode's explanatory paragraph told the user to press the *Advanced* button
+— a button that does not exist. There is a `Simple: on` toggle, and saying
+"Advanced" was a word left over from a design that was never built. It now names
+the control that is actually on screen.
+
+**And one claim the README was making it could not back.** It now says the CI
+workflow exists *and* that it has never run, because this repository's CI is not
+enabled — so the three operating systems are untested claims rather than
+verified ones. A matrix in a YAML file is not evidence.
+
+suite: 288 unit / 168 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.

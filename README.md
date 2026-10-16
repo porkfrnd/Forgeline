@@ -63,9 +63,12 @@ entirely without losing any information.
 | Cathode | Dark, Light | Amber CRT warmth: warm black, orange phosphor |
 | Paper | Dark, Light | Neutral, GitHub-like, quiet blue accent |
 | Mono | Dark, Light | Black and white, hairlines only |
-| Dracula | Dark | |
-| Nord | Dark | |
-| Phosphor | Dark | Hidden, not in the picker |
+| Dracula | Dark | The Dracula palette, as its author defined it |
+| Nord | Dark | Nord's arctic blues |
+| Phosphor | Dark | Not in the picker — reachable only through the palette |
+
+A family that cannot do a mode disables the control and says why, rather than
+offering a switch that would do nothing.
 
 Surfaces are Glass (translucent, ambient gradient, blur) or Solid (opaque and
 flat). Effects Off forces Solid and removes all motion.
@@ -118,6 +121,21 @@ button.
 **The Undo timeline**, with the saved snapshot and the command behind it:
 
 ![Undo timeline](screenshots/design/lagoon-journal-open.png)
+
+**The log every branch draws at once**, lanes coloured so a split is visible
+before you read a line:
+
+![History graph](screenshots/final-desktop-history.png)
+
+**A release**, with its plan stated before anything is done — this is the
+version now, this is what it becomes, these are the commits it contains:
+
+![The release manager](screenshots/final-desktop-release.png)
+
+**The gitignore doctor**, which reads the project type off the real files rather
+than from a list:
+
+![The gitignore doctor](screenshots/final-narrow-doctor.png)
 
 The package has **not** been published to npm, and the name `forgeline` has
 not been checked for availability. Do not treat it as installable yet.
@@ -260,6 +278,11 @@ npm run test:e2e    # end-to-end tests (Playwright, 1440px and 800px)
 `npm run verify` is the gate. Nothing is committed to `main` unless it is
 green.
 
+There is a GitHub Actions workflow, `.github/workflows/verify.yml`, that runs
+`verify` on Linux, macOS, and Windows on Node 22 and 24. It has never been run
+against a real push, because this repository's CI is not enabled — so the three
+operating systems remain untested claims rather than verified ones.
+
 End-to-end tests need a browser once:
 
 ```
@@ -287,7 +310,7 @@ src/server/git/branches.ts    list, create, switch, track, rename, delete
 src/server/git/stash.ts       save, apply, pop, drop, and the stack as one view
 src/server/git/history.ts     the log, per-file history, and blame
 src/server/git/conflicts.ts   read, resolve, finish, or abandon a stopped merge
-src/server/git/release.ts     version bump, changelog, tag
+src/server/git/release.ts     version bump, changelog, release commit, tag
 src/server/git/doctor.ts      project type, .gitignore suggestions, untracked findings
 src/server/git/ssh.ts         list SSH keys and their public halves
 src/server/notes.ts           per-repository notes, stored in app-data only
