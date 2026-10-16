@@ -215,6 +215,41 @@ export function localDate(now: Date = new Date()): string {
   return `${now.getFullYear()}-${padding(now.getMonth() + 1)}-${padding(now.getDate())}`;
 }
 
+/**
+ * Commit what a release wrote.
+ *
+ * The spec's acceptance criteria say the release flow "produces a version
+ * commit and a tag", so committing is the default. The escape hatch is a flag
+ * rather than the design, because "version bumped, changelog written, nothing
+ * committed" is a release that failed in a way a user has to notice.
+ *
+ * The message is assembled from the version rather than from a template the
+ * user never sees: `release: v1.3.0` says what happened in the words the
+ * changelog uses, and `git log` stays readable if the user never edits it.
+ */
+export async function commitRelease(repoPath: string, version: string): Promise<ReleaseResult> {
+  const before = await readRefs(repoPath);
+  const message = `release: v${version}`;
+  const res = await runGit(["-C", repoPath, "commit", "-m", message], { cwd: repoPath });
+  if (res.exitCode !== 0) return fail(res);
+  // The tag follows the commit, so a release is never a commit that was
+  // intended to be tagged and then was not.
+  const tagged = await tagRelease(repoPath, `v${version}`, `Release ${version}`);
+  if (!tagged.ok) return fail(tagged as unknown as GitRun);
+  return {
+    ...res,
+    ok: true,
+    output: `${res.stdout}\n${tagged.output}`.trim(),
+    detail: `committed and tagged v${version}${before.head !== null ? "" : " (first commit)"}`,
+  };
+}
+
+/** HEAD, for the journal entry. */
+async function readRefs(repoPath: string): Promise<{ head: string | null }> {
+  const res = await runGit(["-C", repoPath, "rev-parse", "HEAD"], { cwd: repoPath });
+  return { head: res.exitCode === 0 ? res.stdout.trim() : null };
+}
+
 /** Write a file inside a repository, refusing a path that escapes it. */
 async function writeTracked(
   repoPath: string,

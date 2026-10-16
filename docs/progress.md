@@ -437,3 +437,30 @@ suite: 222 unit / 148 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 
 **The README audit the brief asked for, and what it found.** The Status section still said "Milestones 1–6 are underway" and "What does not exist yet: branches, stash, history, conflicts, and the release manager" — all of which have existed for several commits. It is now written against what the code does, and the publish status is stated twice, once in Status and once in Install, so a reader who skims cannot conclude it is installable. The operating-system line now says plainly that only Linux has been run, and the layout map names the modules that exist rather than the ones that did when the section was first written.
 
 suite: 259 unit / 162 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.
+
+## M9b — closing the acceptance-criteria gap, and one tag that could have lied
+
+**Steps and results:**
+
+1. The spec's acceptance criteria say the release flow "produces a version
+   commit and a tag". M8 deliberately did not commit, on the grounds that the
+   message is the one part of a release that should not be automatic. Both are
+   true and the spec wins: `commitRelease` now makes the commit and the tag,
+   `release: v<version>`, with a checkbox to leave it out rather than by default.
+2. A tag without a commit used to land on whatever HEAD already was, which for a
+   release is a commit that is not the release — a version that git says is
+   released and is not. It is refused now, with the reason, and the panel says the
+   same thing next to the checkbox it emails rather than doing it quietly.
+3. Two unit tests for `commitRelease` — the happy path, and the one where a
+   `pre-commit` hook refuses the commit, asserting the tag is NOT made for a
+   release that did not happen.
+4. Two e2e tests, one per side of the checkbox.
+
+**The mistake worth recording is not the missing feature, it is the direction of a
+default.** Reading the acceptance criteria after the fact, "nothing commits" was
+standing in for "the user should write the message" — a real worry that had
+hardened into the opposite default. The default decides what the first person
+through the door gets, and the first person through the door should get a
+release that released.
+
+suite: 261 unit / 164 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.

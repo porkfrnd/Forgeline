@@ -102,8 +102,11 @@ is built and tested:
 - **Conflicts.** When a merge stops, the resolver appears on its own — it is
   the one state in git that does not go away by itself. Each file is shown with
   all three versions beside it, and three answers in the same words.
-- **Releases.** Version bump, changelog, and tag, with the plan stated before
-  anything is done. Nothing commits.
+- **Releases.** Version bump, changelog, tag, and a release commit, with the plan
+  stated before anything is done. Nothing pushes: a release only leaves this
+  computer when you push it. Leaving the commit out is a checkbox, not the
+  default, because a tag has to name the release and the release has to exist
+  first.
 - **Simple mode.** Save and Send, with plain wording, for people who want to
   save files and not learn git.
 - **Extras.** A command palette on Ctrl/Cmd-K, the gitignore doctor, SSH key

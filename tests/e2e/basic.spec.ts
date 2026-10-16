@@ -2317,7 +2317,7 @@ test.describe("Milestone 8 releases", () => {
     }
   });
 
-  test("making a release writes the version, the changelog, and the tag — and no commit", async ({ page }) => {
+  test("making a release writes the version, the changelog, the tag, and the release commit", async ({ page }) => {
     const { baseUrl } = serverInfo();
     const cookie = await sessionCookie(baseUrl);
     const { root, dir } = await makeReleasableRepo(baseUrl, cookie, "make");
@@ -2345,16 +2345,26 @@ test.describe("Milestone 8 releases", () => {
       // that was already HEAD, because nothing was committed for it.
       const tags = spawnSync("git", ["tag", "--list"], { cwd: dir, encoding: "utf8" }).stdout.split("\n");
       expect(tags).toContain("v1.3.0");
+      // The tag is on the release commit, not on the one that was HEAD before —
+      // which is what "a tag and a version commit" means, and the reason the
+      // release commits at all.
       const tagged = spawnSync("git", ["rev-parse", "v1.3.0^{commit}"], { cwd: dir, encoding: "utf8" }).stdout.trim();
-      expect(tagged).toBe(headBefore);
+      expect(tagged).not.toBe(headBefore);
 
-      // Nothing committed: the commit is the user's, because the message is
-      // the one part of a release that should not be automatic.
+      // The release committed, which is what the spec's acceptance criteria
+      // ask for: a version commit and a tag. Leaving it to the user is a
+      // checkbox, not the design, and there is a separate test for that.
+      const subject = spawnSync("git", ["log", "-1", "--format=%s"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(subject).toBe("release: v1.3.0");
       const headAfter = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
-      expect(headAfter).toBe(headBefore);
-      const staged = spawnSync("git", ["diff", "--cached", "--name-only"], { cwd: dir, encoding: "utf8" }).stdout.trim();
-      expect(staged).toContain("package.json");
-      expect(staged).toContain("CHANGELOG.md");
+      expect(headAfter).not.toBe(headBefore);
+      const committedFiles = spawnSync("git", ["show", "--name-only", "--format=", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(committedFiles).toContain("package.json");
+      expect(committedFiles).toContain("CHANGELOG.md");
+      // And the working tree is clean, because everything the release wrote
+      // went into the commit.
+      const status = spawnSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(status).toBe("");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -2414,6 +2424,37 @@ test.describe("Milestone 8 releases", () => {
       await expect(panel).toContainText("not in the three-number form");
       await expect(panel).toContainText("not going to guess");
       await expect(panel.getByRole("button", { name: /Make the/ })).toHaveCount(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("leaving the commit out is allowed, and says what it cost", async ({ page }) => {
+    const { baseUrl } = serverInfo();
+    const cookie = await sessionCookie(baseUrl);
+    const { root, dir } = await makeReleasableRepo(baseUrl, cookie, "nocommit");
+    const headBefore = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+
+    try {
+      await page.goto(`${baseUrl}/?t=${await mintToken(baseUrl)}`);
+      await page.locator(".toolbar-release").click();
+      // The unusual case is the one the user asks for, not the one the app
+      // assumes, so the checkbox starts on.
+      await page.locator(".release-panel").getByRole("checkbox").last().uncheck();
+      await page.locator(".release-panel").getByRole("button", { name: "Make the 1.2.4 release" }).click();
+      await page.waitForTimeout(2000);
+
+      // The version and the changelog were written, as promised.
+      expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version).toBe("1.2.4");
+      expect(readFileSync(join(dir, "CHANGELOG.md"), "utf8")).toContain("1.2.4");
+      // And nothing was committed — the release left the work staged for the
+      // user, rather than pretending it finished.
+      const headAfter = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(headAfter).toBe(headBefore);
+      const staged = spawnSync("git", ["diff", "--cached", "--name-only"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+      expect(staged).toContain("package.json");
+      const tags = spawnSync("git", ["tag", "--list"], { cwd: dir, encoding: "utf8" }).stdout.split("\n");
+      expect(tags).not.toContain("v1.2.4");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

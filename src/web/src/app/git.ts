@@ -842,12 +842,15 @@ export async function readReleasePlan(
 export async function makeRelease(
   repoId: string,
   level: "patch" | "minor" | "major",
-  options: { changelog: boolean; tag: boolean },
+  options: { changelog: boolean; tag: boolean; commit: boolean },
 ): Promise<{ ok: true; version?: string; wrote?: string[] } | ActionError> {
   return actionJson(`/api/repos/${encodeURIComponent(repoId)}/release/plan`, {
     level,
     changelog: options.changelog,
     tag: options.tag,
+    // Committing is the default; the checkbox is the unusual case, not the
+    // design, so the flag only has to be sent when it is turned off.
+    commit: options.commit,
   }) as Promise<{ ok: true; version?: string; wrote?: string[] } | ActionError>;
 }
 

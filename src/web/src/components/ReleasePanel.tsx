@@ -25,6 +25,10 @@ export function ReleasePanel({ repoId, onChanged, onError, onNote, onClose }: Re
   const [level, setLevel] = useState<"patch" | "minor" | "major">("patch");
   const [changelog, setChangelog] = useState(true);
   const [tag, setTag] = useState(true);
+  // Committing is the default, so this starts on and the off case is the one
+  // the user asks for. "Everything written, nothing committed" is a release
+  // that failed in a way a person has to notice, so it is not the design.
+  const [commit, setCommit] = useState(true);
 
   const refresh = useCallback(async () => {
     if (repoId === null) return;
@@ -137,9 +141,15 @@ export function ReleasePanel({ repoId, onChanged, onError, onNote, onClose }: Re
           </label>
 
           <label className="release-check">
-            <input type="checkbox" checked={tag} onChange={(event) => setTag(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={commit && tag}
+              disabled={!commit}
+              onChange={(event) => setTag(event.target.checked)}
+            />
             <span>
-              Tag the current commit as <span className="mono">{tagName}</span>
+              Tag the release commit as <span className="mono">{tagName}</span>
+              {!commit ? <span className="display-hint"> a tag has to name the release, so this needs the commit</span> : null}
             </span>
           </label>
 
@@ -147,6 +157,20 @@ export function ReleasePanel({ repoId, onChanged, onError, onNote, onClose }: Re
             <p className="message muted release-warn">
               A tag is a pointer to a commit. Deleting one is the whole of undoing it, and a tag others
               have already pulled disappears for them too — so it is offered here rather than as an undo.
+            </p>
+          ) : null}
+
+          <label className="release-check">
+            <input type="checkbox" checked={commit} onChange={(event) => setCommit(event.target.checked)} />
+            <span>
+              Commit it as <span className="mono">release: v{nextVersion}</span>
+            </span>
+          </label>
+          {!commit ? (
+            <p className="message muted release-warn">
+              Unticking this leaves the version and the changelog written but nothing committed, so the
+              tag — if you asked for one — lands on a commit that is not the release. That is a release
+              that failed in a way you have to notice, so it is offered rather than hidden.
             </p>
           ) : null}
 
@@ -173,15 +197,17 @@ export function ReleasePanel({ repoId, onChanged, onError, onNote, onClose }: Re
             className="button primary"
             disabled={!releaseable || busy !== null}
             onClick={() =>
-              void act(`Made the ${nextVersion} release`, () => makeRelease(repoId, level, { changelog, tag }))
+              void act(`Made the ${nextVersion} release`, () =>
+              makeRelease(repoId, level, { changelog, tag, commit }),
+            )
             }
           >
             {releaseable ? `Make the ${nextVersion} release` : "Nothing to release"}
           </button>
 
           <p className="message muted">
-            This writes the version, the changelog, and the tag — and commits nothing. The commit is yours,
-            because the message is the one part of a release that should not be automatic.
+            This writes the version, the changelog, the tag, and the commit — and then pushes nothing.
+            A release only leaves this computer when you push it.
           </p>
         </>
       ) : null}

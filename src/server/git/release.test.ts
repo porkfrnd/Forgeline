@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { runGit } from "./git.js";
 import {
   bumpVersion,
+  commitRelease,
   listTags,
   localDate,
   nextVersion,
@@ -351,5 +352,59 @@ describe("the changelog date", () => {
     expect(localDate(late)).toBe("2026-10-16");
     const early = new Date(2026, 9, 16, 23, 30);
     expect(localDate(early)).toBe("2026-10-16");
+  });
+});
+
+describe("committing a release", () => {
+  it("makes a release commit and the tag that goes with it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fl-release-"));
+    try {
+      const repo = join(root, "demo");
+      await makeRepo(repo);
+      await committed(repo, "feat: the work");
+      await bumpVersion(repo, "1.2.3", "1.3.0");
+
+      const result = await commitRelease(repo, "1.3.0");
+      expect(result.ok).toBe(true);
+
+      // The commit is there, with a message that reads in a `git log`.
+      const subject = await git(repo, ["log", "-1", "--format=%s"]);
+      expect(subject.stdout.trim()).toBe("release: v1.3.0");
+      // And it contains the version file, because a release commit that does
+      // not contain the release is a commit that missed.
+      const files = await git(repo, ["show", "--name-only", "--format=", "HEAD"]);
+      expect(files.stdout.trim()).toContain("package.json");
+
+      // The tag follows the commit — so a release is never a commit that was
+      // meant to be tagged and then was not.
+      const tags = await git(repo, ["tag", "--list"]);
+      expect(tags.stdout.trim()).toBe("v1.3.0");
+      const tagged = await git(repo, ["rev-parse", "v1.3.0^{commit}"]);
+      const head = await git(repo, ["rev-parse", "HEAD"]);
+      expect(tagged.stdout.trim()).toBe(head.stdout.trim());
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports failure rather than half-releasing when the commit cannot happen", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fl-release-"));
+    try {
+      const repo = join(root, "demo");
+      await makeRepo(repo);
+      await committed(repo, "feat: the work");
+      // A pre-commit hook that fails is a real way this happens, and the failure
+      // that matters is: the tag is NOT made for a release that did not commit.
+      const hookDir = join(repo, ".git", "hooks");
+      mkdirSync(hookDir, { recursive: true });
+      writeFileSync(join(hookDir, "pre-commit"), "#!/bin/sh\necho 'nope' >&2\nexit 1\n", { mode: 0o755 });
+
+      const result = await commitRelease(repo, "1.3.0");
+      expect(result.ok).toBe(false);
+      const tags = await git(repo, ["tag", "--list"]);
+      expect(tags.stdout.trim()).toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

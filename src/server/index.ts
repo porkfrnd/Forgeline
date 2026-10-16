@@ -31,13 +31,13 @@ import { listSshKeys, PROVIDER_KEY_PAGES, setSshHomeForTest } from "./git/ssh.js
 import { readNote, writeNote } from "./notes.js";
 import {
   bumpVersion,
+  commitRelease,
   listTags,
   localDate,
   nextVersion,
   planRelease,
   readVersion,
   renderChangelogSection,
-  tagRelease,
   writeChangelog,
 } from "./git/release.js";
 import {
@@ -1264,14 +1264,17 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
     if (!id) return c.notFound();
     const repo = registry.get(id);
     if (!repo) return c.notFound();
-    const body = await c.req.json<{ level?: unknown; tag?: unknown; changelog?: unknown }>();
+    const body = await c.req.json<{ level?: unknown; tag?: unknown; changelog?: unknown; commit?: unknown }>();
     const level = body.level;
     if (level !== "patch" && level !== "minor" && level !== "major") {
       return c.json({ code: "bad-request", title: "Which size of release?" }, 400);
     }
+    // Committing is the default, so this is `!== false` rather than `=== true`:
+    // a caller that forgets the flag gets the release the spec describes, and
+    // the one state it has to ask for is the unusual one.
+    const makeCommit = body.commit !== false;
     const tagReleaseIt = body.tag === true;
     const writeChangelogFile = body.changelog === true;
-    const wantTagName = typeof body.tag === "string" && body.tag.length > 0 ? body.tag : undefined;
 
     const current = await readVersion(repo.path);
     if (current === null) {
@@ -1323,20 +1326,50 @@ export function createApp(getPort: () => number, opts: CreateAppOptions = {}): H
       written.push("CHANGELOG.md");
     }
 
-    if (tagReleaseIt || wantTagName !== undefined) {
-      const name = wantTagName ?? `v${next}`;
-      // A tag is stamped on the commit it is made on, and it can be deleted —
-      // but only from this machine, and only until it is pushed. The interface
-      // says so rather than presenting a tag as one more undoable thing.
-      const tagged = await queue.run(repo.path, () =>
-        journaled(repo.path, `Tagged the release as ${name}`, () => tagRelease(repo.path, name, `Release ${next}`), {
-          undoable: false,
-          notUndoableReason:
-            "A tag is a pointer to a commit, and deleting one is the whole of undoing it. It is not offered as an undo because deleting a tag that others have pulled removes it for them too.",
-        }),
+    // HEAD before the release commit, so the journal can return to it exactly
+    // rather than guessing that the release is still the top commit.
+    const beforeReleaseRefs = await readRefs(repo.path);
+
+    // The release commits by default, because the spec's acceptance criteria
+    // ask for a version commit and a tag, and because "everything written,
+    // nothing committed" is a release that failed in the way a user has to
+    // notice. Leaving the commit to the user is a flag, not the design.
+    if (makeCommit) {
+      const committed = await queue.run(repo.path, () =>
+        journaled(
+          repo.path,
+          `Released ${next}`,
+          () => commitRelease(repo.path, next),
+          // A commit that has been pushed cannot be taken back by resetting,
+          // and this release is the step before a push. Undo is offered while
+          // it is still local, and the journal says so when it is not.
+          beforeReleaseRefs.head !== null
+            ? { undo: { kind: "reset-soft", head: beforeReleaseRefs.head } }
+            : {
+                undoable: false,
+                notUndoableReason:
+                  "This was the first commit in an empty repository, so there is no earlier commit to return to.",
+              },
+        ),
       );
-      if (!tagged.ok) return gitFailure(c, tagged);
-      written.push(name);
+      if (!committed.ok) return gitFailure(c, committed);
+      written.push(`release: v${next}`);
+    }
+    // No bare tag when the commit is left out. A tag is a name for a commit, so
+    // stamping `v1.3.0` onto a commit that is not the 1.3.0 release produces the
+    // exact confusion the whole feature exists to prevent — a version that git
+    // says is released and is not. It is refused rather than done and explained
+    // afterwards, and the panel says so too.
+    if (!makeCommit && tagReleaseIt) {
+      return c.json(
+        {
+          code: "tag-needs-commit",
+          title: "A tag has to name the release, and the release has to be committed first.",
+          explanation:
+            "Left unchecked, the tag would land on whatever commit was already checked out — a commit that is not this release. Tick the commit, or drop the tag.",
+        },
+        409,
+      );
     }
 
     return c.json({ ok: true, version: next, wrote: written, snapshot: snapshot.ref });
