@@ -10,15 +10,15 @@ command it ran.
 
 **Lagoon, the default**
 
-![Forgeline in Lagoon dark](screenshots/design/lagoon-dark-desktop.png)
+![Forgeline in Lagoon dark](screenshots/design/lagoon-dark-1-dashboard.png)
 
 **Cathode — amber CRT warmth**
 
-![Forgeline in Cathode dark](screenshots/design/cathode-dark-desktop.png)
+![Forgeline in Cathode dark](screenshots/design/cathode-dark-1-dashboard.png)
 
 **Paper — light and quiet**
 
-![Forgeline in Paper light](screenshots/design/paper-light-desktop.png)
+![Forgeline in Paper light](screenshots/design/paper-light-1-dashboard.png)
 
 ## What it is for
 
@@ -73,9 +73,9 @@ offering a switch that would do nothing.
 Surfaces are Glass (translucent, ambient gradient, blur) or Solid (opaque and
 flat). Effects Off forces Solid and removes all motion.
 
-![Nord](screenshots/design/nord-dark-desktop.png)
+![Nord](screenshots/design/nord-dark-1-dashboard.png)
 
-![Effects off](screenshots/design/lagoon-effects-off.png)
+![Effects off](screenshots/design/cathode-dark-effects-off.png)
 
 ## Status
 
@@ -120,7 +120,7 @@ button.
 
 **The Undo timeline**, with the saved snapshot and the command behind it:
 
-![Undo timeline](screenshots/design/lagoon-journal-open.png)
+![Undo timeline](screenshots/design/lagoon-dark-5-undo.png)
 
 **The log every branch draws at once**, lanes coloured so a split is visible
 before you read a line:

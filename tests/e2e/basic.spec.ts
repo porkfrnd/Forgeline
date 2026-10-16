@@ -44,7 +44,7 @@ test.describe("Forgeline skeleton", () => {
 
     // Switch family: the panel offers every visible family, and only the
     // palette changes — the layout must not.
-    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    await page.getByRole("button", { name: /^Density,/ }).click();
     const panel = page.getByRole("dialog", { name: "Appearance" });
     await expect(panel).toBeVisible();
     await panel.getByRole("button", { name: "Cathode" }).click();
@@ -57,7 +57,7 @@ test.describe("Forgeline skeleton", () => {
     // Effects Off forces Solid surfaces, and stays complete.
     await panel.getByRole("button", { name: "Off", exact: true }).click();
     await expect(html).toHaveAttribute("data-effects", "off");
-    await expect(page.getByRole("button", { name: "Appearance", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Density,/ })).toBeVisible();
 
     // Nord has no light mode, so the light control is disabled there.
     await panel.getByRole("button", { name: "Nord" }).click();
@@ -71,7 +71,7 @@ test.describe("Forgeline skeleton", () => {
     await page.goto(`${baseUrl}/?t=${token}`);
     // The shortcut listener lives on the mounted app, so wait for the shell
     // before pressing it rather than racing React.
-    await expect(page.getByRole("button", { name: "Appearance", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Density,/ })).toBeVisible();
     await page.keyboard.press("Control+k");
     const dialog = page.getByRole("dialog", { name: "Command palette" });
     await expect(dialog).toBeVisible();
@@ -957,7 +957,10 @@ test.describe("Milestone 4 journal", () => {
       const token = await mintToken(baseUrl);
       await page.goto(`${baseUrl}/?t=${token}`);
 
-      await page.getByRole("button", { name: "Undo timeline" }).click();
+      // The update names this control "Undo history" on the toolbar, and it
+      // reads that way on screen now. The drawer it opens still calls itself the
+      // undo timeline in its own dialog label.
+      await page.getByRole("button", { name: "Undo history" }).click();
       const panel = page.locator(".journal");
 
       // The commit is described in plain English, not as a raw git string.

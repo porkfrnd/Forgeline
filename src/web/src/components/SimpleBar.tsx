@@ -58,7 +58,7 @@ export function SimpleBar({ repoId, changeCount, onSaved, onError, onNote }: Sim
   const nothing = changeCount === 0;
 
   return (
-    <section className="panel simple-bar" data-ticks>
+    <section className="panel simple-bar">
       <p className="message">
         {nothing
           ? "Nothing has changed in this repository, so there is nothing to save."

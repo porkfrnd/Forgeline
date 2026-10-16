@@ -98,7 +98,7 @@ export function FileList({
 
   if (message) {
     return (
-      <div className="panel" data-ticks>
+      <div className="panel">
         <p className="message">{message}</p>
         <button
           className="button"
@@ -111,7 +111,7 @@ export function FileList({
   }
 
   return (
-    <section className="panel file-list" data-ticks>
+    <section className="panel file-list">
       <p className="label">Changed files</p>
       <ul className="row-list">
         {files.map((file) => {

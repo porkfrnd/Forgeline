@@ -67,7 +67,7 @@ export function StashPanel({ repoId, hasChanges, onChanged, onError, onNote, onC
   const canSave = message.trim().length === 0 || message.trim().length > 1;
 
   return (
-    <section className="panel stash-panel" data-ticks>
+    <section className="panel stash-panel">
       <span className="label">Stashes</span>
 
       <form

@@ -1,0 +1,33 @@
+/* The four font roles, bundled.
+ *
+ *  Every one of these is an OFL-1.1 face, subset to Latin, weights 400/500/600
+ *  only, and the woff2 files are bundled by Vite into the built package — so
+ *  the app works with no network, and no font is ever fetched at runtime. The
+ *  OFL licence texts ship beside the built web assets (see the copy step in
+ *  vite.config.ts), because OFL-1.1 requires the licence to travel with the
+ *  font.
+ *
+ *  Barlow Condensed has no tabular figures. That is fine for hero numbers,
+ *  which are one number at a time, but it is why any table of numbers in the
+ *  interface uses --font-ui with tabular figures instead.
+ */
+
+/* --font-display: repo names, card titles, and hero numbers. 20 to 48 px. */
+@import "@fontsource/barlow-condensed/latin-400.css";
+@import "@fontsource/barlow-condensed/latin-500.css";
+@import "@fontsource/barlow-condensed/latin-600.css";
+
+/* --font-ui: interface text, labels, buttons, menus, the commit summary. */
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+
+/* --font-code: diffs, paths, hashes, branch names, commands. */
+@import "@fontsource/jetbrains-mono/latin-400.css";
+@import "@fontsource/jetbrains-mono/latin-500.css";
+@import "@fontsource/jetbrains-mono/latin-600.css";
+
+/* --font-message: the app's own voice, in translated cards. */
+@import "@fontsource/source-serif-4/latin-400.css";
+@import "@fontsource/source-serif-4/latin-500.css";
+@import "@fontsource/source-serif-4/latin-600.css";

@@ -50,7 +50,7 @@ export function ErrorCard({
   };
 
   return (
-    <div className="panel error-card" role="alert" data-ticks>
+    <div className="panel error-card" role="alert">
       <p className="label">What happened</p>
       <p className="error-title">{error.title}</p>
       {error.explanation !== undefined ? (

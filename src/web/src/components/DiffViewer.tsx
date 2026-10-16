@@ -70,7 +70,7 @@ export function DiffViewer({
 
   if (message) {
     return (
-      <div className="panel" data-ticks>
+      <div className="panel">
         <p className="message">{message}</p>
         <button className="button" onClick={() => setMessage(null)}>
           Dismiss
@@ -84,7 +84,7 @@ export function DiffViewer({
 
   if (error) {
     return (
-      <div className="panel" data-ticks>
+      <div className="panel">
         <p className="message">{error}</p>
         <button className="button" onClick={onBack}>
           Back to files
@@ -95,7 +95,7 @@ export function DiffViewer({
 
   if (!diff) {
     return (
-      <div className="panel" data-ticks>
+      <div className="panel">
         <p className="message muted">Loading diff…</p>
       </div>
     );
@@ -103,7 +103,7 @@ export function DiffViewer({
 
   if (diff.binary) {
     return (
-      <div className="panel" data-ticks>
+      <div className="panel">
         <p className="label">{path}</p>
         <p className="message">Binary file — diff not shown.</p>
         <button className="button" onClick={onBack}>
@@ -117,7 +117,7 @@ export function DiffViewer({
   const otherView = staged ? "Show unstaged changes" : "Show staged changes";
 
   return (
-    <section className="panel diff-viewer" data-ticks>
+    <section className="panel diff-viewer">
       <div className="diff-header">
         <button className="button" onClick={onBack}>
           ← Files

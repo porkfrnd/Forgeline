@@ -492,6 +492,65 @@ number is measured.
 
 suite: 288 unit / 168 e2e, `npm run verify` green on Node v24.21.0 / git 2.47.3 / Linux.
 
+---
+
+## Update 4, slice A — foundations and themes
+
+Design repair, sub-slice A. Not a milestone; presentation only.
+
+**The gate came first, and it earned its keep.** `scripts/check-contrast.mjs`
+became a thin wrapper over one shared colour engine, and a new
+`scripts/check-design.mjs` runs the Update 4 section 6 checks against a real
+server and a real repository, then runs the same colour engine. Writing the
+checks before changing the theme meant every finding below was a measured defect
+rather than a hunch.
+
+**It found that every light mode measured 0.000 between page and card.** White
+over white is not a hierarchy, it is nothing to measure. The dark modes' third
+surface level sat too close to their second. The fixed ladders are verified per
+family and mode in OKLCH lightness, which is the perceptually even measure;
+`docs/design.md` records why the check measures lightness rather than RGB distance.
+
+**Two font faces are now self-hosted and bundled.** Barlow Condensed is the
+display family the update asked for, at 22 KB of Latin woff2 inside the 40 KB
+budget, OFL-1.1, with the four licence texts shipped beside the built assets
+because OFL requires them to travel with the font. The font packages are dev
+dependencies — the running app imports nothing from `node_modules`, so a plain
+`npm ci --omit=dev` install still starts.
+
+**Three sizes in the update contradicted its own floor.** The update specifies a
+12px status bar and 12px text there while also flooring body text at 13px, and it
+sketches a 12px sidebar branch line while its own type table puts branches at
+13px. The floor won in all three cases, the bar stays 28px, and the reasoning is
+written into `docs/design.md` where the next person can disagree with it.
+
+**One check caught my own measuring bug, which is the check working.** It compared
+a card's paint colour raw against a drawer's composited colour, so it was
+measuring two different things and reporting a step that does not exist on
+screen. Both are composited over the base now. This is why the gate runs the
+checks and not a person's memory of them.
+
+**Corner marks are gone.** The `[data-ticks]` attribute existed on nineteen
+components, drawn from a `.panel[data-ticks]::before` and `::after` pair in
+`tokens.css`. Deleted from every one of them, along with the rules.
+
+**Three controls named themselves differently from their own visible text**, which
+`@axe-core/playwright` (now a dev dependency, with its one-line justification
+recorded in `docs/decisions.md`) found on its first run: a density button reading
+"Cozy" but named "Appearance", an undo button reading "History" but named "Undo
+timeline", and a search field whose name omitted the shortcut it displayed. The
+undo control now reads "Undo history" as the update names it. A repository row was
+also carrying `aria-selected`, which is not legal on a button, so the selected
+repository was announced as nothing.
+
+The screenshots are captures of real repositories built by
+`scripts/build-design-fixture.mjs` — six repos including one stopped mid-merge, one
+with two thousand commits, one with a single commit, and one with fourteen changed
+files covering M, A, D, R and U. Nothing on screen is invented.
+
+suite: 288 unit / 168 e2e, `npm run verify` green and `npm run verify:design` green
+on Node v24.21.0 / git 2.47.3 / Linux.
+
 ## M9d — the final pass, and the copy that named a button that did not exist
 
 **Steps and results:**

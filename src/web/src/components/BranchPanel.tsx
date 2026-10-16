@@ -96,7 +96,7 @@ export function BranchPanel({ repoId, onChanged, onError, onNote, onClose }: Bra
   const canCreate = NEW_NAME.test(newName.trim()) && !branches.some((b) => b.name === newName.trim());
 
   return (
-    <section className="panel branch-panel" data-ticks>
+    <section className="panel branch-panel">
       <span className="label">Branches</span>
 
       {detached ? (

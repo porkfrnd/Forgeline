@@ -37,7 +37,10 @@ export function RepoRail({ repos, selectedId, onSelect, loadError, liveMode }: R
                 <button
                   type="button"
                   className="row rail-row"
-                  aria-selected={repo.id === selectedId}
+                  // aria-selected belongs to option/tab/row, not to a button;
+                  // aria-current is the legal way to say "this is the one you are
+                  // looking at" and screen readers announce it as such.
+                  aria-current={repo.id === selectedId ? "true" : undefined}
                   onClick={() => onSelect(repo.id)}
                 >
                   <span className="rail-name mono">{repo.name}</span>

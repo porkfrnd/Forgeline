@@ -42,7 +42,7 @@ export function CommitComposer({
   };
 
   return (
-    <section className="panel commit-composer" data-ticks>
+    <section className="panel commit-composer">
       <div className="commit-header">
         <p className="label">Commit</p>
         <p className="muted">

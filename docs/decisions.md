@@ -168,7 +168,62 @@ The slot rule, real data only, the wrap-the-git-CLI contract, everything about s
 - **Barlow Condensed has no tabular figures.** Hero numbers stay in it, because they are one number at a time; any table of numbers uses `--font-ui` with tabular figures, exactly as the update allows.
 - **`@axe-core/playwright` is added as a dev dependency.** It is not already present, and section 6 asks for it only with a justification: the six design checks include keyboard access and hit targets, and a font-size/contrast script cannot see a control that is only reachable by pointer, or a focus ring that never appears. This is the one-line justification. It is a dev dependency and never ships.
 - **Font packages are dev dependencies, not dependencies.** They are consumed at build time by Vite; the running app imports nothing from `node_modules`. A runtime dependency would mean the package could not start from a plain `npm ci --omit=dev` install.
-- **Branch and gate.** Three sub-slices, `wip/design-foundations`, `wip/design-desktop`, `wip/design-charts`, each merged to `main` only when `npm run verify` and `npm run verify:design` both pass. Sections 6.1 to 6.6 become `npm run verify:design`.
+- **Branch and gate.** Three sub-slices, `wip/design-foundations`, `wip/design-desktop`, `wip/design-charts`, each merged to `main` only when `npm run verify` and `npm run verify:design` both pass. Sections 6.1 to 6.7 become `npm run verify:design`.
+
+### Places where the update contradicts itself
+
+The update is a design document, not a spec, and three of its own rules cannot
+all be true at once. Each is resolved below with the reason, so the next person
+can disagree with a specific decision instead of a vague feeling.
+
+**0. Lagoon Dark's panel cannot clear its own surface step either.** Section 5
+gives `rgba(16,28,40,.72)` as Lagoon Dark's glass panel over a `#0A141C` base.
+Composited, that panel is 0.026 in OKLCH lightness above the base, and the same
+document requires at least 0.04. No alpha can close the gap: at the paint's own
+lightness the alpha would have to exceed 1, so the paint itself has to be lighter.
+
+*Decision:* the panel paint is `rgb(28,38,45)` at the update's own 0.72 alpha,
+which composites 0.056 above the base. The hue is unchanged — this is the same
+teal-black, lightened by as much as the rule requires and no more.
+
+**1. Its light bases cannot clear its own surface step.** Section 5 specifies
+`#F6F8FA` for Paper and `#EAF4F6` for Lagoon Light, and says panels are white.
+A white card over `#F6F8FA` is 0.032 in OKLCH lightness, and the same document
+requires at least 0.04 between the base and a card. Nothing a white paint can do
+closes that gap, because white is the ceiling.
+
+*Decision:* each light base is darkened by about two percent of lightness and
+nothing else — the hue is kept, and `#EAF4F6` becomes `#E6F0F2`, `#FFF4E8`
+becomes `#F7ECE1`, `#F6F8FA` becomes `#ECEEF0`, and Mono's white becomes
+`#EEEEEE`. A white card then steps 0.05, which is above the floor rather than
+just under it. The panels stay white and translucent enough that Glass still
+reads as glass, at alpha 0.97.
+
+**2. The third surface level has a direction that only works on one side.** The
+update says a menu or drawer is "at least 0.04 lighter again", which a light
+theme cannot do past a white card. In a light theme the third level is the row
+hover, which is *darker* than the card, and that is correct there.
+
+*Decision:* the check measures the **size** of each step, not its direction, and
+reports it as `above` for want of a better word that covers both. The alternative
+was either an unmeasurable rule or a light theme with two levels pretending to
+have three.
+
+**3. It specifies 12px text twice while flooring body text at 13px.** Section 4
+sketches a 28px status bar with 12px text; the same section's sidebar sketch puts
+branches at 12px; section 3's type table floors body and control text at 13px.
+
+*Decision:* the floor wins, and the bar stays 28px. This is not a weakening of
+the floor — it is the floor winning against a size suggestion in the same
+document. `docs/design.md` records it where it can be seen.
+
+### Update 4 vs Update 3
+
+Where the two disagree on visuals, Update 4 wins, and the Update 3 rules still
+govern safety, recovery, secrecy, commit cadence, the slot rule, and real data
+only. What Update 4 replaced from the earlier updates: the four font roles, the
+deletion of corner marks, the demotion of the heat ramp, the three accent tokens,
+the removal of "Coasy", and the rework of the undo drawer.
 
 ### Anti-slop note
 

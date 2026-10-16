@@ -89,7 +89,6 @@ export function UndoTimeline({
       role="dialog"
       aria-modal="false"
       aria-label="Undo timeline"
-      data-ticks
     >
       <div className="journal-head">
         <p className="label">

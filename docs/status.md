@@ -332,9 +332,120 @@ does. Three sub-slices, each on `wip/design-<name>`, merged to `main` only when
 
 | Slice | Scope | State |
 | --- | --- | --- |
-| A | Foundations and themes (Update 4 sections 3 and 5): the fourth font role, self-hosted fonts, the type floor, the 4px grid, accent tokens, corner marks removed, the seven families repaired | not started |
+| A | Foundations and themes (Update 4 sections 3 and 5): the fourth font role, self-hosted fonts, the type floor, the 4px grid, accent tokens, corner marks removed, the seven families repaired | code complete, caught by the gate |
 | B | Desktop layout and components (section 4): sidebar, toolbar, repo header, file rows, composer, undo drawer, dashboard | not started |
 | C | Real-data charts and hero numbers (rules 4 and 6): hero numbers, activity dots, branch timeline, change-size pills | not started |
 
 `docs/design.md` carries the done-definition; the checklist in Update 4 section 8
 is the gate.
+
+### Slice A — what is done, and what the gate caught
+
+Both gates are green: `npm run verify` (contrast, typecheck, lint, lint:copy,
+288 unit tests, 168 e2e tests) and `npm run verify:design`, which did not exist
+before this slice and now has seven checks. The Update 4 section 6 list became
+real checks in `scripts/check-design.mjs`, and `scripts/check-contrast.mjs` became
+a thin wrapper over one shared colour engine, `scripts/check-contrast-engine.mjs`,
+so the browser checks and the token checks cannot disagree about the colours.
+
+Writing the checks first was the point: every item below was a real defect the
+checks found, not something predicted in advance.
+
+- **Every light mode measured 0.000 between its base and its card.** A pure white
+  base has nothing above it for a white panel to step to. Each light base is now
+  a visible off-white in the family's own hue, and the surface ladder is verified
+  per family and mode.
+- **The third surface level sat too close to the second in five dark modes.** Now
+  0.04+ in OKLCH for both steps.
+- **The contrast check measured a card's paint raw and a drawer's composited**, so
+  it compared two different things. Both are composited over the base now, which
+  is what actually renders.
+- **The status bar, the sidebar's branch line, and the file-status label were
+  under the 13px body floor** the same update specifies. The update gives a 12px
+  status bar and 12px text in the same document; the floor won, and the reason is
+  recorded in `docs/design.md` rather than quietly changed.
+- **The undo drawer overlapped the status bar by 11px.** Its height is now derived
+  from a `--statusbar-h` token rather than a number written twice.
+- **The scan input was a 29px target and the file rows 20px.** The type check
+  catches anything under 32px, and the update floors controls there.
+- **Three controls named themselves differently from their own visible text**
+  (`aria-label="Appearance"` on a button reading "Cozy", `aria-label="Undo
+  timeline"` on a button reading "History", and a search field whose name omitted
+  the shortcut it was showing). The update calls that control "Undo history", and
+  the undo button now says so. A repository row was also carrying `aria-selected`,
+  which is not a legal attribute on a button, so the selected repository was
+  announced as nothing; `aria-current` says what was meant.
+
+The screenshots for section 7 are captured by
+`scripts/capture-screenshots-u4.mjs` from real repositories built by
+`scripts/build-design-fixture.mjs` — six repositories, one with fourteen changed
+files covering M, A, D, R and U, one with very long names, one with two thousand
+commits, one with a single commit, and one left in a stopped merge — into
+`screenshots/design/`.
+
+### Slice A — the required report
+
+**Before and after.** The "before" set is the committed pair
+`screenshots/design/lagoon-dark-desktop.png`,
+`screenshots/design/cathode-dark-desktop.png`,
+`screenshots/design/paper-light-desktop.png` and
+`screenshots/design/nord-dark-desktop.png`. The "after" set is the nine states
+for seven families at 1440x900 and device pixel ratio 2, plus 1024x768, the
+800px narrow layout, and Cathode Dark in Effects Off and in Solid:
+
+```
+screenshots/design/lagoon-dark-{1..9}-*.png      screenshots/design/lagoon-dark-1024-dashboard.png
+screenshots/design/lagoon-light-{1..9}-*.png     screenshots/design/lagoon-dark-800-narrow.png
+screenshots/design/cathode-dark-{1..9}-*.png     screenshots/design/cathode-dark-effects-off.png
+screenshots/design/cathode-light-{1..9}-*.png    screenshots/design/cathode-dark-solid.png
+screenshots/design/mono-dark-{1..9}-*.png
+screenshots/design/nord-dark-{1..9}-*.png
+screenshots/design/paper-light-{1..9}-*.png
+```
+
+**Checks that pass.** `npm run verify` (contrast, typecheck, lint, lint:copy, 288
+unit tests, 168 e2e tests) and `npm run verify:design`, being the type floor,
+contrast and surface steps, overflow and clipping at 1440/1024/800, overlap,
+hit targets, keyboard access, and the automated accessibility pass. All seven
+checks green, and 407 colour pairs plus 264 lane checks across the families.
+
+**What could not be done here, and what was done instead.** The update asks for a
+review agent given only the screenshots and section 8, and for one line of
+defects per screenshot. This environment's model has no image input, so no agent
+here can look at a PNG: the `read_image` tool refuses every capture, and a
+review agent that could not see the files would be inventing its findings, which
+is the one thing this project's rules forbid. The review agent was attempted and
+returned exactly that answer, so it was not retried.
+
+In its place, the renders were measured from their pixels. Every family's
+identity comes out where the update's table puts it, which is a check against
+what was intended rather than against what was assumed:
+
+| Family | Dominant hue on screen | The update says |
+| --- | --- | --- |
+| Lagoon light | 180°, 52% of saturated pixels | mint-cyan |
+| Lagoon dark | 195° and 210° | teal and cyan |
+| Cathode light | 30°, 99% | orange |
+| Cathode dark | 15° and 30° | orange to red-brown |
+| Mono dark | 19 saturated pixels in the whole frame, so effectively none | black and white, no ambient layer |
+| Nord dark | 225°, 99% | frost `#88C0D0` |
+| Paper light | 210°, 99% | `#0969DA` blue |
+
+Every state differs measurably from every other state in the same theme, and the
+light and dark modes of a family are 217 to 229 apart in mean channel value, so
+no state is a duplicate and no mode is a repaint.
+
+**Still open, and why.** The one-line-per-screenshot visual review is not done,
+and nothing else in the list below is. The open checklist items all belong to
+slices B and C by the update's own section boundaries, not to slice A:
+
+- Section 4's desktop layout — the composer's `n/72` count, the right-aligned
+  "Commit N file" pill with its "Write a summary to commit" reason, the 96px
+  description minimum, the half-filled selection control that replaces the
+  "staged + unstaged" text, and the raw snapshot ids moving behind their
+  disclosure. These are section 4, so they are slice B.
+- Rules 4 and 6 — hero numbers from real data, activity dots, the branch
+  timeline, and the change-size graph. These are slice C.
+
+So slice A is code complete and caught by both gates, and the review the update
+asks for is the one thing this session cannot supply on its own.

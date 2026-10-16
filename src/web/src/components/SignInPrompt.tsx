@@ -142,7 +142,7 @@ export default function SignInPrompt({ authFailure, onDismiss, onSignedIn, onClo
   // Already signed in: show the account, and offer a way out of it.
   if (auth.signedIn && auth.user !== null) {
     return (
-      <section className="panel signin" data-ticks>
+      <section className="panel signin">
         <span className="label">Signed in</span>
         {auth.user.avatarUrl !== null ? (
           <img className="signin-avatar" src={auth.user.avatarUrl} alt="" width={28} height={28} />
@@ -176,7 +176,7 @@ export default function SignInPrompt({ authFailure, onDismiss, onSignedIn, onClo
   const startOver = () => setPhase({ kind: "idle" });
 
   return (
-    <section className="panel signin" data-ticks>
+    <section className="panel signin">
       <span className="label">Sign in</span>
 
       {!auth.configured ? (

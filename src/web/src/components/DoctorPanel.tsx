@@ -77,7 +77,7 @@ export function DoctorPanel({ repoId, onChanged, onError, onNote, onClose }: Doc
   const findable = report.tracked.length;
 
   return (
-    <section className="panel doctor-panel" data-ticks>
+    <section className="panel doctor-panel">
       <span className="label">Gitignore doctor</span>
 
       <p className="message">

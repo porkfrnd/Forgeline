@@ -483,17 +483,19 @@ export function App() {
           type="button"
           className="button search-field"
           onClick={() => setAppearanceOpen(true)}
-          aria-label="Search commits and files"
         >
           <span className="muted">Search commits and files</span>
-          <kbd className="keycap">Ctrl K</kbd>
+          {/* Hidden from the accessible name: a keyboard shortcut IS the visible
+              text of a control for sighted users, but a screen-reader user has
+              their own way to reach the palette and hears the name twice. */}
+          <kbd className="keycap" aria-hidden="true">Ctrl K</kbd>
         </button>
         <button
           ref={settingsRef}
           type="button"
           className="button"
           aria-expanded={appearanceOpen}
-          aria-label="Appearance"
+          aria-label={`Density, ${appearance.density === "compact" ? "compact" : "cozy"}`}
           onClick={() => setAppearanceOpen((v) => !v)}
         >
           {appearance.density === "compact" ? "Compact" : "Cozy"}
@@ -503,16 +505,19 @@ export function App() {
           type="button"
           className="button"
           aria-expanded={journalOpen}
-          aria-label="Undo timeline"
           onClick={() => setJournalOpen((v) => !v)}
         >
           <History size={14} strokeWidth={1.5} aria-hidden="true" />
-          History
+          Undo history
         </button>
+        {/* The update calls this control "Undo history". The name and the visible
+            text now agree, because a control whose text says "History" but whose
+            name says "Undo timeline" cannot be activated by anyone who speaks its
+            visible text. */}
       </header>
 
       <main className="work">
-        <section className="work-scan panel" data-ticks>
+        <section className="work-scan panel">
           <p className="label">Scan a folder</p>
           <div className="scan-row">
             <input
@@ -549,7 +554,6 @@ export function App() {
             {identityPrompt ? (
               <form
                 className="panel identity-form"
-                data-ticks
                 onSubmit={(e) => {
                   e.preventDefault();
                   void submitIdentity();
@@ -703,7 +707,7 @@ export function App() {
         ) : null}
 
         {!simpleMode ? (
-        <section className="panel worktable" data-ticks>
+        <section className="panel worktable">
           {selectedId === null ? (
             <>
               <p className="message empty-title">No repository is open yet.</p>

@@ -61,7 +61,7 @@ export function SshPanel({ onError, onNote, onClose }: SshPanelProps) {
   );
 
   return (
-    <section className="panel ssh-panel" data-ticks>
+    <section className="panel ssh-panel">
       <span className="label">SSH keys</span>
       <p className="message">
         An SSH key is what lets git talk to GitHub, GitLab, or Bitbucket without a password. Forgeline

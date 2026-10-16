@@ -88,7 +88,7 @@ export function RemoteBar({ repoId, ahead, behind, onChanged, onError }: RemoteB
   if (remotes.length === 0) return null;
 
   return (
-    <section className="work-remote panel" data-ticks>
+    <section className="work-remote panel">
       <span className="label">Remote</span>
       <button
         type="button"

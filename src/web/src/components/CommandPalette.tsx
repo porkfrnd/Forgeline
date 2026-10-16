@@ -76,7 +76,6 @@ export function CommandPalette({ actions }: CommandPaletteProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        data-ticks
         onClick={(e) => e.stopPropagation()}
       >
         <input

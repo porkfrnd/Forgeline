@@ -25,10 +25,12 @@
     "lint": "eslint .",
     "lint:copy": "node scripts/lint-copy.js",
     "check:contrast": "node scripts/check-contrast.mjs",
+    "check:design": "node scripts/check-design.mjs",
     "test": "vitest run",
     "pretest:e2e": "npm run build",
     "test:e2e": "playwright test",
-    "verify": "npm run check:contrast && npm run typecheck && npm run lint && npm run lint:copy && npm run test && npm run test:e2e"
+    "verify": "npm run check:contrast && npm run typecheck && npm run lint && npm run lint:copy && npm run test && npm run test:e2e",
+    "verify:design": "npm run check:contrast && npm run check:design"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
@@ -38,6 +40,7 @@
     "open": "^10.1.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@fontsource/barlow-condensed": "5.3.0",
     "@fontsource/ibm-plex-sans": "5.3.0",
     "@fontsource/jetbrains-mono": "5.3.0",

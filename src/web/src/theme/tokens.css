@@ -19,12 +19,47 @@
   --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-message: "Source Serif 4", Georgia, serif;
+  --font-display: "Barlow Condensed", "Oswald", "Arial Narrow", var(--font-ui);
 
-  /* Structure */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  /* The type scale. These used to be referenced but never defined, which in CSS
+   *  is not an error — an undefined var() falls back to the inherited value, so
+   *  37 rules silently rendered at the body size and never did what they said.
+   *  Defining them is what makes the floor checkable.
+   *
+   *  11px is the floor. Nothing below it: micro labels, never sentences.
+   *  13px is the floor for body and control text. */
+  --font-size-xs: 11px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 15px;
+  --font-size-message: 15px;
+  --font-size-display: 22px;
+  --font-size-hero: 40px;
+
+  /* One shape language: pills for anything you press or that reports state,
+   *  and inputs/cards on their own radii. */
+  --radius-pill: 999px;
+  --radius-input: 12px;
+  --radius-card: 20px;
   --hairline-w: 1px;
+
+  /* The 4px grid. Everything structural lands on one of these steps. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Anything the user has to be able to click is at least this big. */
+  --min-hit: 32px;
+  /* The status bar's own height, so an overlay can stop above it rather than
+   *  being told a number by hand. The update is explicit that nothing covers
+   *  it, and the way to guarantee that is to make the bar's height a token the
+   *  overlay maths can read. */
+  --statusbar-h: 28px;
+  /* Toolbar height, for the same reason. */
+  --toolbar-h: 56px;
 
   /* Motion. Only transform, opacity, and colour are ever animated. */
   --dur-fast: 120ms;
@@ -34,21 +69,20 @@
 
   /* A visible focus ring in the accent, offset from the element. */
   --focus-ring: 0 0 0 2px var(--base), 0 0 0 4px var(--accent);
-
-  /* Registration tick size, the technical-drawing detail on panels. */
-  --tick: 7px;
 }
 
 /* Density: row height and panel padding, through tokens only. */
 :root,
 [data-density="cozy"] {
   --row-h: 36px;
-  --panel-pad: 12px;
+  --panel-pad: 16px;
+  --card-pad: 20px;
   --gap: 12px;
 }
 [data-density="compact"] {
   --row-h: 28px;
-  --panel-pad: 8px;
+  --panel-pad: 12px;
+  --card-pad: 16px;
   --gap: 8px;
 }
 
@@ -93,11 +127,15 @@ body {
 
 /* ---------- surfaces ---------- */
 
+/* One surface level, borderless. Depth comes from tone, not from a border or a
+ *  shadow: a shadow is for menus, drawers, and dialogs only, and a card never
+ *  sits inside a card. There is exactly one card radius and one input radius in
+ *  the whole stylesheet, and everything you press is a pill. */
 .panel {
   background: var(--panel);
-  border: var(--hairline-w) solid var(--hairline);
-  border-radius: var(--radius-md);
-  padding: var(--panel-pad);
+  border: 0;
+  border-radius: var(--radius-card);
+  padding: var(--card-pad, var(--panel-pad));
   position: relative;
 }
 
@@ -105,31 +143,6 @@ body {
 [data-surface="glass"] [data-effects="full"] .panel,
 [data-surface="glass"] [data-effects="reduced"] .panel {
   backdrop-filter: blur(var(--surface-blur));
-}
-
-/* Registration ticks: small corner marks like a technical drawing, drawn
- *  with pseudo-elements so they cost no markup. */
-.panel[data-ticks]::before,
-.panel[data-ticks]::after {
-  content: "";
-  position: absolute;
-  width: var(--tick);
-  height: var(--tick);
-  border-color: var(--accent);
-  opacity: 0.5;
-  pointer-events: none;
-}
-.panel[data-ticks]::before {
-  top: -1px; left: -1px;
-  border-top: 2px solid;
-  border-left: 2px solid;
-  border-top-left-radius: var(--radius-md);
-}
-.panel[data-ticks]::after {
-  bottom: -1px; right: -1px;
-  border-bottom: 2px solid;
-  border-right: 2px solid;
-  border-bottom-right-radius: var(--radius-md);
 }
 
 /* ---------- layout: the workbench ---------- */
@@ -213,32 +226,54 @@ body {
 
 /* ---------- controls ---------- */
 
+/* One shape language: everything you press is a pill. Every control is at least
+ *  --min-hit tall, so a thumb never has to be precise. */
 .button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  min-height: 28px;
-  padding: 4px 10px;
+  min-height: var(--min-hit);
+  padding: 4px 14px;
   background: var(--raised);
   color: var(--text);
   border: var(--hairline-w) solid var(--hairline);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-out),
               border-color var(--dur-fast) var(--ease-out),
-              color var(--dur-fast) var(--ease-out);
+              color var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out);
 }
 .button:hover:not(:disabled) { border-color: var(--accent); }
-.button:disabled { opacity: 0.45; cursor: not-allowed; }
+.button:disabled { cursor: not-allowed; }
 
+/* The enabled primary button is the strongest object on screen, in every theme.
+ *  The fill is the accent in a dark mode and the darker accent in a light one,
+ *  so the label always clears 4.5:1 — verified by scripts/check-contrast.mjs,
+ *  which is what stops a light-mode primary button from quietly looking
+ *  disabled. */
 .button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--base);
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: var(--accent-label);
   font-weight: 600;
 }
+
+/* A disabled control never resembles a dim active button: no fill, a clear
+ *  outline, and reduced contrast — and the reason sits beside it wherever it
+ *  matters, rather than being guessed. */
+.button:disabled,
+.button.primary:disabled {
+  background: transparent;
+  border-color: var(--hairline);
+  color: var(--muted);
+  font-weight: 400;
+  box-shadow: none;
+}
+
 /* Glow only while the button is enabled and ready, never when disabled. */
 [data-effects="full"] .button.primary:not(:disabled) {
   box-shadow: 0 0 0 1px var(--accent), 0 0 18px -6px var(--accent);
@@ -339,7 +374,10 @@ body {
 .rail-row { width: 100%; text-align: left; background: none; border: 0; cursor: pointer; color: inherit; font: inherit; }
 .rail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-branch {
-  font-size: 11px;
+  /* 13px in the code font: the update's type table puts branches there, and its
+   * sidebar sketch said 12px. The foundations win over the sketch. */
+  font-family: var(--font-code);
+  font-size: var(--font-size-sm);
   color: var(--muted);
   border: var(--hairline-w) solid var(--hairline);
   border-radius: 4px;
@@ -350,9 +388,13 @@ body {
   align-items: center;
   gap: 2px;
   font-family: var(--font-code);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-variant-numeric: tabular-nums;
-  color: var(--hot);
+  /* The update puts counts in the accent's column and says a status never
+   * borrows from the heat ramp. This was the one place that did: "3 changed" was
+   * drawn in the ramp's hot end, which means it went orange or green depending on
+   * how stale the repository was, which is not what a count is telling you. */
+  color: var(--accent-text);
 }
 
 /* ---------- toolbar ---------- */
@@ -373,11 +415,14 @@ body {
 .input {
   background: var(--raised);
   border: var(--hairline-w) solid var(--hairline);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-input);
   color: var(--text);
   padding: 5px 8px;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   min-width: 0;
+  /* A 29px text field is a 29px target. The update floors hit targets at 32px,
+   *  and an input is the thing you aim at most precisely. */
+  min-height: var(--min-hit);
 }
 .input::placeholder { color: var(--muted); }
 
@@ -399,18 +444,21 @@ body {
   display: flex;
   align-items: center;
   gap: var(--gap);
-  padding: 4px 8px;
-  border: var(--hairline-w) solid var(--hairline);
-  border-radius: var(--radius-sm);
+  padding: 4px var(--space-3);
+  border: 0;
+  border-radius: var(--radius-pill);
   cursor: pointer;
+  /* The whole row is the control, so the row is the hit target — not the 13px
+   *  text inside it. */
+  min-height: var(--min-hit);
 }
 .file-row:hover { background: var(--raised); }
 .file-letter {
   flex: none;
   width: 18px;
   text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
+  font-family: var(--font-code);
+  font-size: var(--font-size-sm);
   font-weight: 700;
 }
 /* The path is the control that opens the diff, so it looks like text but
@@ -419,12 +467,16 @@ body {
   flex: 1;
   min-width: 0;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   text-align: left;
   color: var(--text);
   background: none;
   border: none;
   padding: 0;
+  /* Fills the row, so the target is the row and not the label. */
+  min-height: var(--min-hit);
+  display: flex;
+  align-items: center;
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -449,7 +501,11 @@ body {
 .file-status {
   flex: none;
   width: 90px;
-  font-size: 11px;
+  /* "staged" is a word, so it reads at the body floor. The half-filled selection
+   *  control that eventually replaces this whole label belongs to the
+   *  desktop-layout slice, not the foundations. */
+  font-family: var(--font-code);
+  font-size: var(--font-size-sm);
   color: var(--muted);
 }
 .file-path { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -486,7 +542,10 @@ body {
   gap: var(--gap);
   padding: 1px 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
+  /* 13px, not the 12px the update's status-bar line suggested: the same
+   * document floors body text at 13px, and a legibility floor beats a size
+   * suggestion. The bar stays 28px and nothing is lost by being readable. */
+  font-size: var(--font-size-sm);
   white-space: pre;
 }
 .diff-line-num {
@@ -503,8 +562,10 @@ body {
   font-weight: 700;
 }
 .diff-line-text { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-.diff-line-add { color: var(--hot); }
-.diff-line-del { color: var(--cold); }
+/* Added and removed lines get their own green and red, never the accent: an
+ *  accent line would say "active" where the user is reading "new" or "gone". */
+.diff-line-add { color: var(--diff-add); }
+.diff-line-del { color: var(--diff-del); }
 .diff-line-context { color: var(--text); }
 .diff-line-marker {
   font-size: 10px;
@@ -546,7 +607,10 @@ body {
   align-items: center;
   gap: var(--gap);
   padding: 4px var(--panel-pad);
-  font-size: 12px;
+  /* 13px, not the 12px the update's status-bar line suggested. The same
+   * document floors body text at 13px, and a legibility floor beats a size
+   * suggestion in the same file. The bar stays 28px and reads better. */
+  font-size: var(--font-size-sm);
 }
 .status-item { display: inline-flex; align-items: center; gap: 6px; }
 
@@ -634,9 +698,13 @@ body {
    that truncates every description. */
 .journal {
   position: fixed;
-  top: 56px;
+  /* It sits between the toolbar and the status bar and never over either. The
+   *  status bar in particular: it is the only place the git version and the
+   *  watcher state live, and covering it means the user cannot tell whether the
+   *  app is still watching while they read the log. */
+  top: var(--toolbar-h);
   right: var(--panel-pad);
-  bottom: var(--panel-pad);
+  bottom: calc(var(--statusbar-h) + var(--panel-pad));
   z-index: 30;
   width: min(420px, calc(100vw - 2 * var(--panel-pad)));
   background: var(--overlay);

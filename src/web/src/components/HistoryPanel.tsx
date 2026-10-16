@@ -87,7 +87,7 @@ export function HistoryPanel({ repoId, onError, onClose }: HistoryPanelProps) {
   if (repoId === null) return null;
 
   return (
-    <section className="panel history-panel" data-ticks>
+    <section className="panel history-panel">
       <div className="history-head">
         <span className="label">History</span>
         <select

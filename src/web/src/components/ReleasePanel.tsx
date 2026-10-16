@@ -77,7 +77,7 @@ export function ReleasePanel({ repoId, onChanged, onError, onNote, onClose }: Re
   const releaseable = plan.hasChanges && nextVersion !== null;
 
   return (
-    <section className="panel release-panel" data-ticks>
+    <section className="panel release-panel">
       <span className="label">Releases</span>
 
       {plan.currentVersion === null ? (

@@ -105,7 +105,7 @@ export function ConflictResolver({ repoId, onChanged, onError, onNote, onClose }
   const count = entries.length;
 
   return (
-    <section className="panel conflict-resolver" data-ticks data-operation={op}>
+    <section className="panel conflict-resolver" data-operation={op}>
       <span className="label">Conflicts</span>
       <p className="message conflict-lead">
         {count === 1

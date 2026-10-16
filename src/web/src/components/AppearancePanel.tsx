@@ -52,7 +52,6 @@ export function AppearancePanel({ closeRef, onClose }: AppearancePanelProps) {
   return (
     <div
       className="panel appearance"
-      data-ticks
       role="dialog"
       aria-label="Appearance"
       ref={panelRef}

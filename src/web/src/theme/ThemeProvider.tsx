@@ -172,6 +172,13 @@ export function buildTokens(
     "--muted": tokens.muted,
     "--accent": tokens.accent,
     "--accent-text": tokens.accentText,
+    "--accent-strong": tokens.accentStrong,
+    /* The label on a filled primary button. A dark mode's accent is already
+     *  brighter than light text, so its label is the page's own near-black; a
+     *  light mode fills with a darker accent, so its label is white. The
+     *  contrast script checks this pair for every family and mode, which is the
+     *  check that catches a light-mode button quietly failing button text. */
+    "--accent-label": mode === "dark" ? tokens.base : "#FFFFFF",
     "--cold": tokens.cold,
     "--hot": tokens.hot,
     "--ambient-from": tokens.ambient[0],
@@ -184,6 +191,10 @@ export function buildTokens(
   tokens.lanes.forEach((lane, i) => {
     out[`--lane-${i + 1}`] = lane;
   });
+  out["--diff-add"] = tokens.diff.add;
+  out["--diff-del"] = tokens.diff.del;
+  out["--diff-add-surface"] = tokens.diff.addSurface;
+  out["--diff-del-surface"] = tokens.diff.delSurface;
   for (const [key, value] of Object.entries(tokens.status)) {
     out[`--status-${key}`] = value;
   }

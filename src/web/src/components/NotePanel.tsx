@@ -69,7 +69,7 @@ export function NotePanel({ repoId, onError, onClose }: NotePanelProps) {
   if (repoId === null) return null;
 
   return (
-    <section className="panel note-panel" data-ticks>
+    <section className="panel note-panel">
       <span className="label">A note about this repository</span>
       <p className="message muted">
         Kept on this computer, in Forgeline's own folder — never inside the repository, so it never shows
